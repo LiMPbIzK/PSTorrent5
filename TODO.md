@@ -11,12 +11,14 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 - [x] Clonar el repositorio upstream en `J:\Codigo\pstorrent5`
 - [x] Crear `ARCHITECTURE.md` y `TODO.md` desde las plantillas
 - [x] Subir el SDK a **v0.44** en `setup.sh` (versión + SHA256) y en `.github/workflows/build.yml`, y actualizar `README.md`
-- [ ] Crear el fork en GitHub y reconfigurar remotos (`origin` = fork, `upstream` = original) — **bloqueado: requiere cuenta GitHub**
-- [ ] Habilitar build local: instalar `clang-18 lld-18 llvm-18-dev` en WSL2 Ubuntu 24.04 — **bloqueado: requiere sudo**
+- [x] Crear el fork en GitHub y reconfigurar remotos (`origin` = fork `LiMPbIzK/PSTorrent5`, `upstream` = `jfcardososantos/PS5Torrent`)
+- [x] **Build local en Windows** con llvm-mingw y `build.ps1` (sin WSL, sin sudo, sin make) → genera `ps5_torrent.elf`
+- [x] `build.ps1` lee `SRCS`/`CFLAGS`/`INCLUDES`/`LDLIBS` del `Makefile` (sin divergencia con el build de CI/Linux)
+- [x] Dejar de rastrear `ps5_torrent.elf` (artefacto de build; sigue en `.gitignore`). Copia del binario del autor preservada en `.deps/reference/` para análisis
+- [ ] **Activar GitHub Actions en el fork** (1 clic en la pestaña Actions: "Enable workflows") — sin esto la CI no corre
 - [ ] Verificar que la CI genera `ps5_torrent.elf` sin errores
 - [ ] Cargar el ELF en la consola (loader 9021) y confirmar que **desaparece el SIGILL** del issue #1; adjuntar `klog`
 - [ ] Abrir el panel desde otro dispositivo de la LAN y añadir un `.torrent` de prueba
-- [ ] (decisión pendiente) `ps5_torrent.elf` está **forzado en el repo** pese a `*.elf` en `.gitignore`; valorar `git rm --cached` para que los builds no ensucien el árbol
 - [ ] Actualizar `README.md`/`CHANGELOG.md` del fork con el nuevo SDK y la matriz de firmwares
 
 **Hito 0.5 (spike crítico, medio día) — decide la arquitectura**
@@ -33,6 +35,11 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 - El SDK v0.44 incluye toolchain **nativa de Windows** (`win\prospero-clang.cmd`, `prospero-clang++.cmd`, `prospero-lld.exe`, `ninja.exe`) que invoca `clang` del PATH con `-target x86_64-sie-ps5`. Alternativa al CI, pero **no hay `make` en Windows** (haría falta un `build.ps1`).
 - Entorno local: WSL2 con **Ubuntu 24.04.4**, con `make`, `gcc` y `python3`, **sin clang-18/lld-18**. `sudo` pide contraseña.
 - `prospero-llvm-config` exige `llvm-config-18` (paquete `llvm-18-dev`) para el build.
+- **Toolchain de Windows resuelta sin sudo ni WSL**: `J:\llvm-mingw` (clang 23.1.3, portable, sin admin) + `build.ps1`.
+- **LLVM 23 trae toolchain nativa de PS5**: con `-target x86_64-sie-ps5` y `SCE_PROSPERO_SDK_DIR` apunta él mismo, clang añade los crt (`crt1.o/crti/crtbegin/crtend/crtn`), el script `main.script` y las libs stub (`-lc_stub_weak -lkernel_stub_weak`). Por eso **no** hay que pasar `crt1.o` ni `-T ldscripts/elf_x86_64.x` (eso es de la ruta antigua, clang < 20).
+- **clang ignora `--ld-path` y exige un ejecutable llamado `prospero-lld`**, mientras que lld elige driver por `argv[0]` (renombrar un `ld.lld.exe` a `prospero-lld.exe` da "lld is a generic driver"). Solución: `tools/prospero-lld/prospero-lld.c`, un shim que hace `_execvp("ld.lld.exe", argv)` con `argv[0]` correcto. Se compila a `.deps/bin/prospero-lld.exe`.
+- Las libs SCE del SDK son **`.so`**, no `.a` (`libSceSystemService.so`, `libSceUserService.so`, `libkernel_web.so`…); `-lSceX` resuelve bien vía `-L target/lib`.
+- **Validación del build local**: ELF64, `Type DYN`, máquina x86-64, `.text` en `0x4000` y secciones alineadas a 16 KB (página de PS5). Mismo tamaño (201.328 bytes) que el binario publicado por el autor, aunque con hash distinto (distinta versión de compilador).
 
 ---
 
