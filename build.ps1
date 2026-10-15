@@ -189,6 +189,10 @@ Write-Step "Objetos: $compiled recompilados, $($objects.Count - $compiled) al d�
 
 # ----------------------------------------------------------------- enlazar ----
 Write-Step 'Enlazando ps5_torrent.elf'
+# El volumen del proyecto no siempre trunca al sobrescribir: si el ELF anterior
+# era mayor, quedaria cola del binario viejo. Se borra antes de enlazar.
+if (Test-Path $Elf) { Remove-Item $Elf -Force }
+
 & $Clang @LinkSearchFlags `
     @objects `
     '--start-no-unused-arguments' '--sysroot' $SdkPath `
@@ -196,7 +200,17 @@ Write-Step 'Enlazando ps5_torrent.elf'
     '--end-no-unused-arguments' `
     '-o' $Elf
 if ($LASTEXITCODE -ne 0) { Fail 'el enlazado falló' }
+
+# Algunos volumenes (unidades sincronizadas/virtuales) tardan en publicar el
+# fichero recien creado, asi que se reintenta antes de darlo por perdido.
+for ($i = 0; $i -lt 20 -and -not (Test-Path $Elf); $i++) { Start-Sleep -Milliseconds 250 }
 if (-not (Test-Path $Elf)) { Fail 'no se generó el ELF' }
+
+# Verifica que es un ELF real (evita dar por bueno un fichero parcial).
+$magic = Get-Content $Elf -Encoding Byte -TotalCount 4
+if ($magic.Count -lt 4 -or $magic[0] -ne 0x7F -or $magic[1] -ne 0x45 -or $magic[2] -ne 0x4C -or $magic[3] -ne 0x46) {
+    Fail "el fichero generado no es un ELF válido ($Elf)"
+}
 
 $size = (Get-Item $Elf).Length
 Write-Host ''

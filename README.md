@@ -105,6 +105,16 @@ O diagnóstico testa o painel na porta 12389 e os loaders nas portas 9021 e
 
 ## Compilação
 
+### Windows (nativo)
+
+É possível compilar o ELF em Windows sem WSL, sem `sudo` e sem `make`:
+
+```powershell
+.\build.ps1
+```
+
+Ver `docs/BUILD-WINDOWS.md` para requisitos, shim do enlazador e validação.
+
 ### macOS
 
 Pré-requisitos:
