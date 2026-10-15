@@ -1,2 +1,24 @@
 # Unified diffs use a single-space marker for blank context lines.
 *.patch whitespace=-blank-at-eol
+
+# Cross-platform line endings: the project builds on Linux (CI/WSL) and macOS.
+# Scripts must keep LF or bash fails with "bad interpreter: ...^M".
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+Makefile text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+
+# Binary assets: never touch.
+*.png binary
+*.jpg binary
+*.dds binary
+*.at9 binary
+*.elf binary
+*.pkg binary
+*.zip binary
+*.gp4 binary
