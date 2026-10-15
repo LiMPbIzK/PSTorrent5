@@ -15,8 +15,8 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 - [x] **Build local en Windows** con llvm-mingw y `build.ps1` (sin WSL, sin sudo, sin make) → genera `ps5_torrent.elf`
 - [x] `build.ps1` lee `SRCS`/`CFLAGS`/`INCLUDES`/`LDLIBS` del `Makefile` (sin divergencia con el build de CI/Linux)
 - [x] Dejar de rastrear `ps5_torrent.elf` (artefacto de build; sigue en `.gitignore`). Copia del binario del autor preservada en `.deps/reference/` para análisis
-- [ ] **Activar GitHub Actions en el fork** (1 clic en la pestaña Actions: "Enable workflows") — sin esto la CI no corre
-- [ ] Verificar que la CI genera `ps5_torrent.elf` sin errores
+- [x] **GitHub Actions habilitado** en el fork y **CI en verde**: runs #1, #2 y #3 con `Build` + `Inspect payload` + `Upload ELF artifact` correctos (≈25 s por build)
+- [x] Verificar que la CI genera `ps5_torrent.elf` sin errores (artefacto `ps5_torrent-elf` descargable)
 - [ ] Cargar el ELF en la consola (loader 9021) y confirmar que **desaparece el SIGILL** del issue #1; adjuntar `klog`
 - [ ] Abrir el panel desde otro dispositivo de la LAN y añadir un `.torrent` de prueba
 - [ ] Actualizar `README.md`/`CHANGELOG.md` del fork con el nuevo SDK y la matriz de firmwares
