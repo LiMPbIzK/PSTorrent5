@@ -57,7 +57,7 @@ homebrew utilizado no console.
 - abertura automática de `http://127.0.0.1:12389/` no PS5;
 - fPKG com ícone e arte próprios para a tela principal;
 - diagnóstico do console diretamente pelo macOS;
-- build reproduzível com o ps5-payload-sdk v0.41.
+- build reproduzível com o ps5-payload-sdk v0.44.
 
 <p align="center">
   <img src="pkg/sce_sys/pic0.png" alt="Arte do painel PS5Torrent" width="88%">
@@ -118,7 +118,7 @@ Prepare o SDK e compile o ELF:
 ./setup.sh
 ```
 
-O script instala/verifica `llvm@18` e `socat`, baixa o ps5-payload-sdk v0.41,
+O script instala/verifica `llvm@18` e `socat`, baixa o ps5-payload-sdk v0.44,
 confere seu SHA-256 e gera `ps5_torrent.elf`. Tudo permanece dentro do projeto,
 sem `sudo` e sem alterações no `.zshrc`.
 

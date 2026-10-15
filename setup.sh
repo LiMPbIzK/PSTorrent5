@@ -4,8 +4,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SDK_VERSION="${PS5_SDK_VERSION:-v0.41}"
-SDK_SHA256="ebfb0acb5260511951a80e17db41650c62d20a8caf8659a230b928dc85005984"
+SDK_VERSION="${PS5_SDK_VERSION:-v0.44}"
+SDK_SHA256="4d06eab777bb135705b5a6816688c9132efb246093fe606ac488ab6cf65ca5b0"
 SDK_DIR="${PS5_PAYLOAD_SDK:-$SCRIPT_DIR/.deps/ps5-payload-sdk}"
 SDK_URL="https://github.com/ps5-payload-dev/sdk/releases/download/${SDK_VERSION}/ps5-payload-sdk.zip"
 INSTALL_DEPS=1
