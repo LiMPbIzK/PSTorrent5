@@ -147,6 +147,23 @@ typedef struct {
         uint64_t next_try_sec;  // 0 = may be tried now
         int      fails;
     } tracker_state[MAX_TRACKER_STATE];
+
+    /* Descarga de piezas, una en curso por torrent.
+     *
+     * Se pide en bloques de PEER_BLOCK_SIZE (el protocolo no admite bloques
+     * mayores) y se van acumulando en rx_buf hasta completar la pieza; solo
+     * entonces se verifica el SHA-1 y se escribe en disco. Un torrent puede
+     * tener varios peers conectados, pero descarga de uno cada vez: simple,
+     * correcto y suficiente para empezar (la E/S no bloqueante del hito 1
+     * permitira paralelizar). */
+    unsigned char *rx_buf;      // Buffer de la pieza en curso
+    int            rx_piece;    // Indice de la pieza en curso (-1 = ninguna)
+    uint32_t       rx_length;   // Tamano real de esa pieza, en bytes
+    uint32_t       rx_have;     // Bytes acumulados
+    uint32_t       rx_next;     // Siguiente offset a pedir
+    int            rx_pending;  // Bloques pedidos y aun no recibidos
+    int            rx_peer;     // Peer que la esta sirviendo (-1 = ninguno)
+    size_t         rx_pieces_done; // Piezas completadas, para trazar progreso
 } managed_torrent_t;
 
 /**

@@ -74,8 +74,11 @@ int piece_mgr_complete(piece_mgr_t *pm, size_t index,
     sha1_hash(data, data_len, actual_hash);
 
     if (memcmp(actual_hash, pm->pieces[index].hash, 20) != 0) {
-        /* Hash mismatch */
-        pm->pieces[index].state = PIECE_FAILED;
+        /* Hash mismatch: la pieza vuelve a la cola para reintentarla. Dejarla
+         * en PIECE_FAILED la sacaria para siempre de get_next() y la descarga
+         * nunca podria completarse. */
+        pm->pieces[index].state = PIECE_FREE;
+        pm->num_failed++;
         return -1;
     }
 
@@ -94,7 +97,11 @@ int piece_mgr_complete(piece_mgr_t *pm, size_t index,
 void piece_mgr_failed(piece_mgr_t *pm, size_t index)
 {
     if (!pm || index >= pm->num_pieces) return;
-    pm->pieces[index].state = PIECE_FAILED;
+
+    /* Vuelve a PIECE_FREE (no a PIECE_FAILED) porque get_next() solo reparte
+     * piezas libres: marcarla como fallida la perderia para siempre. */
+    pm->pieces[index].state = PIECE_FREE;
+    pm->num_failed++;
 }
 
 int piece_mgr_is_done(const piece_mgr_t *pm)

@@ -83,8 +83,11 @@ int peer_recv_message(int sock,
                       uint32_t *piece_begin,
                       unsigned char *data,
                       uint32_t *data_len,
+                      uint8_t *out_msg_id,
                       int timeout_sec)
 {
+    if (out_msg_id) *out_msg_id = 0xff;
+
     if (net_set_timeout(sock, timeout_sec) < 0)
         return -1;
 
@@ -104,6 +107,8 @@ int peer_recv_message(int sock,
     uint8_t msg_id;
     if (net_recv_exact(sock, &msg_id, 1) < 0)
         return -1;
+
+    if (out_msg_id) *out_msg_id = msg_id;
 
     switch (msg_id) {
     case PEER_MSG_CHOKE:

@@ -79,6 +79,9 @@ int peer_send_request(int sock, uint32_t index, uint32_t begin, uint32_t length)
  * @param piece_begin   Output: offset within piece
  * @param data          Output buffer for piece data
  * @param data_len      Output: length of received data
+ * @param out_msg_id    Output: message id received (choke/unchoke/have...).
+ *                      Necesario para saber si el peer nos ha desbloqueado,
+ *                      que es lo que permite pedir bloques.
  * @param timeout_sec   Receive timeout
  * @return 0 for piece data, 1 for keepalive/choke/unchoke/have, -1 for error/disconnect
  */
@@ -87,6 +90,7 @@ int peer_recv_message(int sock,
                       uint32_t *piece_begin,
                       unsigned char *data,
                       uint32_t *data_len,
+                      uint8_t *out_msg_id,
                       int timeout_sec);
 
 #endif /* PS5TORRENT_PEER_WIRE_H */
