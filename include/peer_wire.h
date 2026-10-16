@@ -22,6 +22,16 @@
 #define PEER_MSG_REQUEST    6
 #define PEER_MSG_PIECE      7
 #define PEER_MSG_CANCEL     8
+#define PEER_MSG_EXTENDED   20
+
+/**
+ * Extension protocol (BEP-10) / ut_pex (BEP-11).
+ *
+ * El sub-id 0 es siempre el handshake extendido, donde cada lado dice que
+ * extensiones tiene y con que numero quiere que se le hablen.
+ */
+#define PEER_EXT_HANDSHAKE  0
+#define PEER_EXT_UT_PEX     1   // Nuestro numero para ut_pex
 
 /**
  * A peer wire message header.
@@ -77,6 +87,21 @@ int peer_send_interested(int sock);
 int peer_send_keepalive(int sock);
 
 /**
+ * Send the extension handshake (BEP-10, sub-id 0).
+ * Sin esto el peer no sabe que hablamos ut_pex y no nos manda ningun peer.
+ */
+int peer_send_extended_handshake(int sock);
+
+/**
+ * Send a ut_pex message (BEP-11) with a compact IPv4 peer list (6 bytes each).
+ * @param ext_id  Numero que el peer pidio para ut_pex en su handshake
+ * @param compact Lista compacta de peers (ip 4 B + puerto 2 B, orden de red)
+ * @param count   Numero de peers de esa lista (maximo 64)
+ */
+int peer_send_ut_pex(int sock, uint8_t ext_id,
+                     const unsigned char *compact, size_t count);
+
+/**
  * Send a "request" message for a block.
  */
 int peer_send_request(int sock, uint32_t index, uint32_t begin, uint32_t length);
@@ -86,6 +111,7 @@ int peer_send_request(int sock, uint32_t index, uint32_t begin, uint32_t length)
  */
 typedef struct {
     uint8_t        msg_id;         // PEER_MSG_* recibido
+    uint8_t        ext_id;         // Sub-id si msg_id == PEER_MSG_EXTENDED
     uint32_t       piece_index;    // Para HAVE y PIECE
     uint32_t       piece_begin;    // Para PIECE
     uint32_t       data_len;       // Bytes de datos en data

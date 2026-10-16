@@ -2,6 +2,7 @@
 #include "net_utils.h"
 #include "sha1.h"
 #include "http_server.h"
+#include "bencode.h"
 #include "ui.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -415,6 +416,7 @@ void torrent_mgr_stop(int index)
     }
     mt->num_peers = 0;
     mt->active_peers = 0;
+    mt->peer_pool_count = 0;
     mt->speed_down = 0;
     mt->speed_up = 0;
 
@@ -480,6 +482,158 @@ const char *torrent_mgr_error_str(torrent_error_t err)
     case TERR_HASH_MISMATCH: return "Hash mismatch";
     default:                 return "Unknown error";
     }
+}
+
+/**
+ * Pool de direcciones candidatas.
+ *
+ * Los peers ya no salen solo del announce: PEX (BEP-11) los trae a decenas. Eso
+ * obliga a guardarlos y conectarlos de poco en poco, porque cada connect bloquea
+ * hasta NET_PEER_CONNECT_TIMEOUT_SEC y el panel comparte este hilo.
+ *
+ * @return 1 si la direccion era nueva
+ */
+static int peer_pool_add(managed_torrent_t *mt, const peer_addr_t *addr)
+{
+    if (mt->peer_pool_count >= MAX_PEER_POOL)
+        return 0;
+
+    for (int i = 0; i < mt->peer_pool_count; i++) {
+        if (mt->peer_pool[i].addr.ip == addr->ip &&
+            mt->peer_pool[i].addr.port == addr->port)
+            return 0;
+    }
+
+    mt->peer_pool[mt->peer_pool_count].addr = *addr;
+    mt->peer_pool[mt->peer_pool_count].next_try = 0;
+    mt->peer_pool_count++;
+    return 1;
+}
+
+/**
+ * Conecta con una direccion candidata y, si sale bien, la convierte en peer.
+ *
+ * @return 1 si el peer esta (o acaba de quedar) conectado, 0 si fallo la red
+ */
+static int connect_one(managed_torrent_t *mt, const peer_addr_t *addr)
+{
+    int peer_slot = -1;
+    int already = 0;
+
+    /* Reutilizar el hueco de un peer caido con la misma direccion y no abrir
+     * un socket duplicado si ya esta activo. */
+    for (int j = 0; j < mt->num_peers; j++) {
+        if (mt->peers[j].addr.ip == addr->ip &&
+            mt->peers[j].addr.port == addr->port) {
+            if (mt->peers[j].sock >= 0)
+                already = 1;
+            else
+                peer_slot = j;
+            break;
+        }
+    }
+    if (already)
+        return 1;
+    if (peer_slot < 0 && mt->num_peers >= MAX_PEERS_PER_TORRENT)
+        return 1;
+
+    int sock = net_tcp_connect_timeout(addr->ip, ntohs(addr->port),
+                                       NET_PEER_CONNECT_TIMEOUT_SEC);
+    if (sock < 0) {
+        /* Se registra la direccion: sirve para distinguir peers de IPv6
+         * (inalcanzables desde aqui) de peers caidos. */
+        ui_log("peer connect failed: %u.%u.%u.%u:%u",
+               (ntohl(addr->ip) >> 24) & 0xff,
+               (ntohl(addr->ip) >> 16) & 0xff,
+               (ntohl(addr->ip) >> 8) & 0xff,
+               ntohl(addr->ip) & 0xff,
+               ntohs(addr->port));
+        return 0;
+    }
+
+    net_set_timeout(sock, NET_PEER_IO_TIMEOUT_SEC);
+
+    uint8_t remote_id[20];
+    if (peer_handshake(sock, mt->torrent->info_hash,
+                       mt->peer_id, remote_id) < 0) {
+        net_close(sock);
+        return 0;
+    }
+
+    if (peer_slot < 0)
+        peer_slot = mt->num_peers++;
+    torrent_peer_t *p = &mt->peers[peer_slot];
+    p->sock = sock;
+    p->addr = *addr;
+    memcpy(p->peer_id, remote_id, 20);
+    p->choked = 1;
+    p->am_interested = 0;
+    p->last_request = 0;
+    p->messages_seen = 0;
+    p->last_keepalive = get_time_sec();
+    p->downloaded = 0;
+    p->uploaded = 0;
+    p->ext_id_ut_pex = 0;
+    p->last_pex_sent = 0;
+
+    /* Bitfield del peer: se reserva ya para poder copiarlo en cuanto llegue
+     * (es lo que permite pedirle solo lo que tiene). */
+    if (!p->bitfield) {
+        p->bitfield_len = (mt->torrent->num_pieces + 7) / 8;
+        p->bitfield = calloc(p->bitfield_len, 1);
+    } else {
+        memset(p->bitfield, 0, p->bitfield_len);
+    }
+    p->has_bitfield = 0;
+
+    mt->active_peers++;
+
+    peer_send_interested(sock);
+    /* BEP-10: sin el handshake extendido el peer no nos manda ut_pex, que es
+     * de donde van a salir los peers de verdad. */
+    peer_send_extended_handshake(sock);
+
+    return 1;
+}
+
+/**
+ * Prueba direcciones del pool dentro de un presupuesto de tiempo.
+ *
+ * @param deadline       Segundos (epoch) en los que hay que parar
+ * @param max_connects   Maximo de peers nuevos por ronda
+ * @param failed         Salida: intentos que fallaron
+ * @return peers conectados en esta ronda
+ */
+static int connect_from_pool(managed_torrent_t *mt, uint64_t deadline,
+                             int max_connects, int *failed)
+{
+    int made = 0;
+    uint64_t now = get_time_sec();
+
+    for (int i = 0; i < mt->peer_pool_count && made < max_connects; ) {
+        if (get_time_sec() >= deadline)
+            break;
+
+        if (mt->peer_pool[i].next_try > now) {
+            i++;
+            continue;
+        }
+
+        peer_addr_t addr = mt->peer_pool[i].addr;
+        if (connect_one(mt, &addr)) {
+            /* Conectado: fuera del pool (ya vive en mt->peers) */
+            mt->peer_pool[i] = mt->peer_pool[--mt->peer_pool_count];
+            made++;
+        } else {
+            /* Fallo de red: no insistir en cada vuelta */
+            mt->peer_pool[i].next_try = now + PEER_POOL_RETRY_SEC;
+            if (failed)
+                (*failed)++;
+            i++;
+        }
+    }
+
+    return made;
 }
 
 /**
@@ -574,89 +728,19 @@ static int announce_to_tracker(managed_torrent_t *mt)
             mt->tracker_interval = tr->interval;
         peers_reported += tr->num_peers;
 
-        /* Connect to new peers. */
+        /* Los peers del tracker van al pool: el de Ubuntu solo manda UNO por
+         * vuelta, asi que hay que juntarlos con los que traiga PEX. */
         if (tr->num_peers > 0 && tr->peers) {
-          for (int i = 0; i < tr->num_peers; i++) {
-            /* Reuse a disconnected slot for the same peer, and avoid opening
-             * a duplicate socket when it is already active. */
-            int peer_slot = -1;
-            int already = 0;
-            for (int j = 0; j < mt->num_peers; j++) {
-                if (mt->peers[j].addr.ip == tr->peers[i].ip &&
-                    mt->peers[j].addr.port == tr->peers[i].port) {
-                    if (mt->peers[j].sock >= 0)
-                        already = 1;
-                    else
-                        peer_slot = j;
-                    break;
-                }
-            }
-            if (already) continue;
-            if (peer_slot < 0 && mt->num_peers >= MAX_PEERS_PER_TORRENT)
-                continue;
-            if (connects_this_round >= MAX_PEER_CONNECTS_PER_ANNOUNCE)
-                break;
-            if (get_time_sec() >= deadline)
-                break;
-            connects_this_round++;
+            for (int i = 0; i < tr->num_peers; i++)
+                peer_pool_add(mt, &tr->peers[i]);
 
-            /* Connect to peer */
-            int sock = net_tcp_connect_timeout(tr->peers[i].ip,
-                                               ntohs(tr->peers[i].port),
-                                               NET_PEER_CONNECT_TIMEOUT_SEC);
-            if (sock < 0) {
-                /* Se registra la direccion: sirve para distinguir peers de
-                 * IPv6 (inalcanzables desde aqui) de peers caidos. */
-                ui_log("peer connect failed: %u.%u.%u.%u:%u",
-                       (ntohl(tr->peers[i].ip) >> 24) & 0xff,
-                       (ntohl(tr->peers[i].ip) >> 16) & 0xff,
-                       (ntohl(tr->peers[i].ip) >> 8) & 0xff,
-                       ntohl(tr->peers[i].ip) & 0xff,
-                       ntohs(tr->peers[i].port));
-                connects_failed++;
-                continue;
-            }
-
-            net_set_timeout(sock, NET_PEER_IO_TIMEOUT_SEC);
-
-            uint8_t remote_id[20];
-            if (peer_handshake(sock, mt->torrent->info_hash,
-                               mt->peer_id, remote_id) < 0) {
-                connects_failed++;
-                net_close(sock);
-                continue;
-            }
-
-            /* Setup peer */
-            if (peer_slot < 0)
-                peer_slot = mt->num_peers++;
-            torrent_peer_t *p = &mt->peers[peer_slot];
-            p->sock = sock;
-            p->addr = tr->peers[i];
-            memcpy(p->peer_id, remote_id, 20);
-            p->choked = 1;
-            p->am_interested = 0;
-            p->last_request = 0;
-            p->messages_seen = 0;
-            p->last_keepalive = get_time_sec();
-            p->downloaded = 0;
-            p->uploaded = 0;
-
-            /* Bitfield del peer: se reserva ya para poder copiarlo en cuanto
-             * llegue (es lo que permite pedirle solo lo que tiene). */
-            if (!p->bitfield) {
-                p->bitfield_len = (mt->torrent->num_pieces + 7) / 8;
-                p->bitfield = calloc(p->bitfield_len, 1);
-            } else {
-                memset(p->bitfield, 0, p->bitfield_len);
-            }
-            p->has_bitfield = 0;
-
-            mt->active_peers++;
-            connects_ok++;
-
-            peer_send_interested(sock);
-          }
+            int failed = 0;
+            int made = connect_from_pool(mt, deadline,
+                                         MAX_PEER_CONNECTS_PER_ANNOUNCE,
+                                         &failed);
+            connects_this_round += made;
+            connects_ok += made;
+            connects_failed += failed;
         }
         tracker_response_free(tr);
     }
@@ -691,6 +775,73 @@ static int announce_to_tracker(managed_torrent_t *mt)
            contacted, peers_reported, connects_this_round, connects_failed,
            mt->error_msg);
     return -1;
+}
+
+/**
+ * Mensajes de la extension (BEP-10).
+ *
+ * De momento solo ut_pex (BEP-11), pero es justo lo que hacia falta: el tracker
+ * de Ubuntu entrega UN peer por announce y el enjambre tiene cientos. El peer
+ * conectado nos pasa su lista y con eso el enjambre se construye en minutos.
+ */
+static void peer_handle_extended(managed_torrent_t *mt, int peer_idx,
+                                 const peer_msg_t *msg, const unsigned char *payload)
+{
+    torrent_peer_t *p = &mt->peers[peer_idx];
+
+    if (msg->ext_id == PEER_EXT_HANDSHAKE) {
+        bcode_node_t *root = bcode_parse(payload, msg->data_len);
+        bcode_node_t *m;
+        bcode_node_t *pex;
+
+        if (!root) {
+            ui_log("peer %d: extended handshake not understood", peer_idx);
+            return;
+        }
+
+        m = bcode_dict_get(root, "m");
+        pex = m ? bcode_dict_get(m, "ut_pex") : NULL;
+        if (pex) {
+            int64_t id = bcode_int_val(pex);
+            if (id > 0 && id < 256) {
+                p->ext_id_ut_pex = (uint8_t)id;
+                ui_log("peer %d supports ut_pex (id %d)", peer_idx, (int)id);
+            }
+        }
+        bcode_free(root);
+        return;
+    }
+
+    if (msg->ext_id != PEER_EXT_UT_PEX)
+        return;
+
+    bcode_node_t *root = bcode_parse(payload, msg->data_len);
+    if (!root)
+        return;
+
+    bcode_node_t *added = bcode_dict_get(root, "added");
+    size_t added_len = 0;
+    const unsigned char *added_buf = added ? bcode_str_val(added, &added_len) : NULL;
+
+    if (added_buf) {
+        int fresh = 0;
+
+        for (size_t off = 0; off + 6 <= added_len; off += 6) {
+            peer_addr_t addr;
+
+            memcpy(&addr.ip, added_buf + off, 4);
+            memcpy(&addr.port, added_buf + off + 4, 2);
+
+            if (addr.port != 0 && peer_pool_add(mt, &addr))
+                fresh++;
+        }
+
+        if (fresh > 0)
+            ui_log("peer %d ut_pex: %d new peer(s) (pool=%d)",
+                   peer_idx, fresh, mt->peer_pool_count);
+    }
+
+    bcode_free(root);
 }
 
 /**
@@ -764,6 +915,10 @@ static void process_peer(managed_torrent_t *mt, int peer_idx)
 
     case 0xff:
         return;  /* Keep-alive */
+
+    case PEER_MSG_EXTENDED:
+        peer_handle_extended(mt, peer_idx, &msg, block_buf);
+        return;
 
     default:
         ui_log("peer %d msg id %u", peer_idx, (unsigned)msg.msg_id);
@@ -990,6 +1145,46 @@ int torrent_mgr_tick(void)
                 continue;
             }
             peer->last_keepalive = now;
+        }
+
+        /* PEX (BEP-11): mandar a cada peer los peers que conocemos. Es como se
+         * construye el enjambre cuando el tracker solo da uno por vuelta. */
+        for (int p = 0; p < mt->num_peers; p++) {
+            torrent_peer_t *peer = &mt->peers[p];
+            unsigned char compact[6 * 64];
+            int n = 0;
+
+            if (peer->sock < 0 || peer->ext_id_ut_pex == 0)
+                continue;
+            if (peer->last_pex_sent != 0 && now - peer->last_pex_sent < 60)
+                continue;
+
+            for (int q = 0; q < mt->num_peers && n < 64; q++) {
+                if (mt->peers[q].sock < 0)
+                    continue;
+                memcpy(compact + n * 6, &mt->peers[q].addr.ip, 4);
+                memcpy(compact + n * 6 + 4, &mt->peers[q].addr.port, 2);
+                n++;
+            }
+
+            /* Lista vacia: no se manda. Un "added" sin peers no aporta nada y
+             * algunos clientes lo cuentan como PEX mal formado. */
+            if (n > 0 &&
+                peer_send_ut_pex(peer->sock, peer->ext_id_ut_pex,
+                                 compact, (size_t)n) == 0)
+                peer->last_pex_sent = now;
+        }
+
+        /* Candidatos del pool (del tracker y de PEX). Se van probando de poco
+         * en poco porque cada connect bloquea y el panel comparte el hilo. Con
+         * 10 peers conectados ya hay con quien tirar: mas solo alargaria las
+         * pausas del panel para nada. */
+        if (mt->active_peers < 10 && mt->peer_pool_count > 0 &&
+            now - mt->last_pool_connect >= 5) {
+            int failed = 0;
+
+            mt->last_pool_connect = now;
+            connect_from_pool(mt, now + POOL_CONNECT_BUDGET_SEC, 4, &failed);
         }
 
         /* Pedir mas bloques: sin esto solo se pediria al recibir algo */

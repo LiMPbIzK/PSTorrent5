@@ -58,6 +58,21 @@
 #define MAX_PEER_CONNECTS_PER_ANNOUNCE 8
 
 /**
+ * Direcciones candidatas guardadas por torrent.
+ *
+ * Antes los peers solo salian del announce y se conectaban en el acto. Con PEX
+ * el peer conectado nos manda decenas de direcciones de golpe, asi que hace
+ * falta un sitio donde dejarlas e irlas probando de poco en poco.
+ */
+#define MAX_PEER_POOL 256
+
+/** Cuanto se espera antes de reintentar una direccion que fallo, en segundos. */
+#define PEER_POOL_RETRY_SEC 300
+
+/** Presupuesto (segundos) de una ronda de conexiones fuera del announce. */
+#define POOL_CONNECT_BUDGET_SEC 3
+
+/**
  * Torrent state.
  */
 typedef enum {
@@ -102,6 +117,11 @@ typedef struct {
     unsigned char *bitfield;
     size_t         bitfield_len;
     int            has_bitfield;
+
+    /* BEP-10/11: numero con el que el peer quiere que le hablemos de ut_pex
+     * (0 = no lo soporta) y cuando le mandamos la ultima lista. */
+    uint8_t        ext_id_ut_pex;
+    uint64_t       last_pex_sent;
 } torrent_peer_t;
 
 /**
@@ -126,6 +146,14 @@ typedef struct {
     torrent_peer_t   peers[MAX_PEERS_PER_TORRENT];
     int              num_peers;
     int              active_peers;
+
+    /* Direcciones candidatas (del tracker y, sobre todo, de ut_pex). */
+    struct {
+        peer_addr_t addr;
+        uint64_t    next_try;
+    } peer_pool[MAX_PEER_POOL];
+    int              peer_pool_count;
+    uint64_t         last_pool_connect;
 
     // Stats
     uint64_t  downloaded;

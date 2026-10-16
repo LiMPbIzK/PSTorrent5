@@ -67,6 +67,66 @@ int peer_send_keepalive(int sock)
     return net_send_all(sock, msg, 4);
 }
 
+/**
+ * Mensaje "extended" (id 20): 4 B de longitud, id, sub-id y el payload.
+ */
+static int peer_send_extended(int sock, uint8_t ext_id,
+                              const unsigned char *payload, size_t len)
+{
+    unsigned char msg[6 + 1024];
+    uint32_t net_len;
+
+    if (len > sizeof(msg) - 6)
+        return -1;
+
+    net_len = htonl((uint32_t)(2 + len));
+    memcpy(msg, &net_len, 4);
+    msg[4] = PEER_MSG_EXTENDED;
+    msg[5] = ext_id;
+    if (len > 0)
+        memcpy(msg + 6, payload, len);
+
+    return net_send_all(sock, msg, 6 + len);
+}
+
+int peer_send_extended_handshake(int sock)
+{
+    /* {"m":{"ut_pex":1},"v":"PSTorrent5"} — las claves van ordenadas, que es
+     * lo que exige la forma canonica del bencode. */
+    static const char dict[] = "d1:md8:ut_pexi1ee1:v9:PSTorrent5e";
+
+    return peer_send_extended(sock, PEER_EXT_HANDSHAKE,
+                              (const unsigned char *)dict, sizeof(dict) - 1);
+}
+
+int peer_send_ut_pex(int sock, uint8_t ext_id,
+                     const unsigned char *compact, size_t count)
+{
+    unsigned char payload[1024];
+    char head[32];
+    int head_len;
+    size_t bytes, pos;
+
+    if (count > 64)
+        count = 64;
+    bytes = count * 6;
+    if (bytes > sizeof(payload) - 16)
+        return -1;
+
+    /* bencode: d5:added<len>:<bytes>e */
+    head_len = snprintf(head, sizeof(head), "d5:added%zu:", bytes);
+    if (head_len < 0 || (size_t)head_len >= sizeof(head))
+        return -1;
+
+    memcpy(payload, head, (size_t)head_len);
+    pos = (size_t)head_len;
+    memcpy(payload + pos, compact, bytes);
+    pos += bytes;
+    payload[pos++] = 'e';
+
+    return peer_send_extended(sock, ext_id, payload, pos);
+}
+
 int peer_send_request(int sock, uint32_t index, uint32_t begin, uint32_t length){
     unsigned char msg[17];
     uint32_t len = htonl(13); // 1 (id) + 12 (payload)
@@ -223,6 +283,46 @@ int peer_recv_message(int sock,
             if (skip) { net_recv_exact(sock, skip, msg_len - 1); free(skip); }
         }
         return 1;
+
+    case PEER_MSG_EXTENDED: {
+        /* sub-id (1 byte) + payload. El handshake extendido y ut_pex viajan
+         * aqui: se copian al buffer del llamante para poder interpretarlos. */
+        if (msg_len < 2) return -1;
+
+        uint8_t ext_id;
+        if (net_recv_exact(sock, &ext_id, 1) < 0) return -1;
+
+        uint32_t payload_len = msg_len - 2;
+
+        if (msg) {
+            msg->ext_id = ext_id;
+            msg->data_len = 0;
+        }
+
+        if (data && payload_len > 0) {
+            uint32_t keep = payload_len;
+            if (data_size > 0 && keep > data_size)
+                keep = (uint32_t)data_size;
+
+            if (net_recv_exact(sock, data, keep) < 0) return -1;
+
+            uint32_t rest = payload_len - keep;
+            if (rest > 0) {
+                unsigned char *skip = malloc(rest);
+                if (skip) { net_recv_exact(sock, skip, rest); free(skip); }
+            }
+            if (msg) msg->data_len = keep;
+            return 1;
+        }
+
+        if (payload_len > 0) {
+            unsigned char *skip = malloc(payload_len);
+            if (!skip) return -1;
+            net_recv_exact(sock, skip, payload_len);
+            free(skip);
+        }
+        return 1;
+    }
 
     default:
         /* Unknown message - skip payload */
