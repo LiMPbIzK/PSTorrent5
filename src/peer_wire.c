@@ -92,11 +92,24 @@ static int peer_send_extended(int sock, uint8_t ext_id,
 int peer_send_extended_handshake(int sock)
 {
     /* {"m":{"ut_pex":1},"v":"PSTorrent5"} — las claves van ordenadas, que es
-     * lo que exige la forma canonica del bencode. */
-    static const char dict[] = "d1:md8:ut_pexi1ee1:v9:PSTorrent5e";
+     * lo que exige la forma canonica del bencode.
+     *
+     * Las longitudes las calcula snprintf a partir de las cadenas: escribirlas
+     * a mano es una trampa. Este mensaje estuvo mal formado (9 por 10 en "v" y
+     * 8 por 6 en "ut_pex") y el sintoma era que el peer nos cerraba la conexion
+     * al instante sin decir nada. */
+    static const char version[] = "PSTorrent5";
+    static const char pex_key[] = "ut_pex";
+    char dict[96];
+    int len = snprintf(dict, sizeof(dict), "d1:md%zu:%si%dee1:v%zu:%se",
+                       sizeof(pex_key) - 1, pex_key, PEER_EXT_UT_PEX,
+                       sizeof(version) - 1, version);
+
+    if (len < 0 || (size_t)len >= sizeof(dict))
+        return -1;
 
     return peer_send_extended(sock, PEER_EXT_HANDSHAKE,
-                              (const unsigned char *)dict, sizeof(dict) - 1);
+                              (const unsigned char *)dict, (size_t)len);
 }
 
 int peer_send_ut_pex(int sock, uint8_t ext_id,

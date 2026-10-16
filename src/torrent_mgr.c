@@ -82,6 +82,29 @@ void torrent_mgr_init(void)
 {
     memset(torrents, 0, sizeof(torrents));
     num_torrents = 0;
+
+    /* Autoprueba del handshake extendido (BEP-10). Un bencode mal formado no da
+     * error en ninguna parte: el peer simplemente cierra la conexion al recibirlo
+     * y desde fuera parece que "el peer se cae solo". Paso una vez, por un
+     * digito de mas en la longitud de una cadena. */
+    {
+        char dict[96];
+        static const char version[] = "PSTorrent5";
+        static const char pex_key[] = "ut_pex";
+        int len = snprintf(dict, sizeof(dict), "d1:md%zu:%si%dee1:v%zu:%se",
+                           sizeof(pex_key) - 1, pex_key, PEER_EXT_UT_PEX,
+                           sizeof(version) - 1, version);
+        bcode_node_t *root = (len > 0) ? bcode_parse((const unsigned char *)dict,
+                                                     (size_t)len) : NULL;
+        bcode_node_t *m = root ? bcode_dict_get(root, "m") : NULL;
+        bcode_node_t *pex = m ? bcode_dict_get(m, "ut_pex") : NULL;
+
+        if (!pex)
+            ui_log("BUG: extended handshake malformed; PEX will not work");
+        else
+            ui_log("PEX ready: ut_pex id %d", (int)bcode_int_val(pex));
+        bcode_free(root);
+    }
 }
 
 int torrent_mgr_add(torrent_t *torrent, const char *save_path,
@@ -513,7 +536,8 @@ static int peer_pool_add(managed_torrent_t *mt, const peer_addr_t *addr)
 /**
  * Conecta con una direccion candidata y, si sale bien, la convierte en peer.
  *
- * @return 1 si el peer esta (o acaba de quedar) conectado, 0 si fallo la red
+ * @return 1 peer nuevo conectado, 0 fallo de red, -1 nada que hacer (ya estaba
+ *         conectado o la tabla de peers esta llena)
  */
 static int connect_one(managed_torrent_t *mt, const peer_addr_t *addr)
 {
@@ -533,9 +557,9 @@ static int connect_one(managed_torrent_t *mt, const peer_addr_t *addr)
         }
     }
     if (already)
-        return 1;
+        return -1;
     if (peer_slot < 0 && mt->num_peers >= MAX_PEERS_PER_TORRENT)
-        return 1;
+        return -1;
 
     int sock = net_tcp_connect_timeout(addr->ip, ntohs(addr->port),
                                        NET_PEER_CONNECT_TIMEOUT_SEC);
@@ -620,10 +644,13 @@ static int connect_from_pool(managed_torrent_t *mt, uint64_t deadline,
         }
 
         peer_addr_t addr = mt->peer_pool[i].addr;
-        if (connect_one(mt, &addr)) {
-            /* Conectado: fuera del pool (ya vive en mt->peers) */
+        int ret = connect_one(mt, &addr);
+
+        if (ret != 0) {
+            /* Conectado o descartado (ya estaba / no cabe): fuera del pool. */
             mt->peer_pool[i] = mt->peer_pool[--mt->peer_pool_count];
-            made++;
+            if (ret == 1)
+                made++;
         } else {
             /* Fallo de red: no insistir en cada vuelta */
             mt->peer_pool[i].next_try = now + PEER_POOL_RETRY_SEC;
