@@ -1,4 +1,5 @@
 #include "net_utils.h"
+#include "ui.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,6 +45,8 @@ int net_resolve(const char *hostname, uint32_t *addr_out)
     /* Try DNS resolution */
     struct hostent *he = gethostbyname(hostname);
     if (!he || he->h_addrtype != AF_INET) {
+        ui_log("dns: '%s' failed (h_errno=%d: %s)", hostname, h_errno,
+               hstrerror(h_errno));
         return -1;
     }
 

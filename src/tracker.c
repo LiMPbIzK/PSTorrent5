@@ -8,17 +8,67 @@
 #include <unistd.h>
 
 /**
+ * Log the first bytes of a response with control characters escaped, so the
+ * exact line-ending style and body layout are visible in the log.
+ */
+static void log_response_head(const unsigned char *buf, size_t len)
+{
+    char text[240];
+    size_t i;
+    size_t out = 0;
+
+    for (i = 0; i < len && out + 3 < sizeof(text); i++) {
+        unsigned char c = buf[i];
+        if (c == '\r') {
+            text[out++] = '\\';
+            text[out++] = 'r';
+        } else if (c == '\n') {
+            text[out++] = '\\';
+            text[out++] = 'n';
+        } else if (c >= 0x20 && c < 0x7f) {
+            text[out++] = (char)c;
+        } else {
+            text[out++] = '.';
+        }
+    }
+    text[out] = '\0';
+
+    ui_log("announce: response head: %s", text);
+}
+
+/**
  * Parse HTTP response, extract headers and body.
+ *
+ * Kept deliberately tolerant: trackers in the wild answer with CRLF or with
+ * bare LF, and some skip the status line altogether. Dropping those responses
+ * means losing every peer they offer.
  */
 static int parse_http_response(const unsigned char *resp, size_t resp_len,
                                int *status_code,
                                const unsigned char **body, size_t *body_len)
 {
-    /* Find "HTTP/1.x " and extract status code */
     const char *p = (const char *)resp;
     const char *end = p + resp_len;
 
-    /* Skip HTTP version */
+    /* Skip leading blank lines and whitespace */
+    while (p < end && (*p == '\r' || *p == '\n' || *p == ' ' || *p == '\t'))
+        p++;
+
+    if (p >= end) return -1;
+
+    /* No HTTP status line: some trackers reply with the bencoded body only */
+    if (strncmp(p, "HTTP/", 5) != 0) {
+        if (*p == 'd' || *p == 'l') {
+            *status_code = 200;
+            *body = (const unsigned char *)p;
+            *body_len = (size_t)(end - p);
+            return 0;
+        }
+        log_response_head(resp, resp_len);
+        return -1;
+    }
+
+    /* Find "HTTP/1.x " and extract status code */
     while (p < end && *p != ' ') p++;
     if (p >= end) return -1;
     p++; // skip space
@@ -27,16 +77,27 @@ static int parse_http_response(const unsigned char *resp, size_t resp_len,
     if (p + 3 > end) return -1;
     *status_code = (p[0] - '0') * 100 + (p[1] - '0') * 10 + (p[2] - '0');
 
-    /* Find double CRLF (empty line separating headers from body) */
+    /* Find the empty line separating headers from body, accepting both
+     * CRLF CRLF and bare LF LF. */
     const char *body_start = NULL;
-    for (const char *s = p; s + 3 < end; s++) {
-        if (s[0] == '\r' && s[1] == '\n' && s[2] == '\r' && s[3] == '\n') {
+    for (const char *s = p; s + 1 < end; s++) {
+        if (s[0] == '\n' && s[1] == '\n') {
+            body_start = s + 2;
+            break;
+        }
+        if (s + 3 < end && s[0] == '\r' && s[1] == '\n' &&
+            s[2] == '\r' && s[3] == '\n') {
             body_start = s + 4;
             break;
         }
     }
 
-    if (!body_start) return -1;
+    if (!body_start) {
+        ui_log("announce: HTTP %d but no header separator found in %zu bytes",
+               *status_code, resp_len);
+        log_response_head(resp, resp_len);
+        return -1;
+    }
 
     *body = (const unsigned char *)body_start;
     *body_len = (size_t)(end - body_start);
