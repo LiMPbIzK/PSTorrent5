@@ -17,8 +17,11 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 - [x] Dejar de rastrear `ps5_torrent.elf` (artefacto de build; sigue en `.gitignore`). Copia del binario del autor preservada en `.deps/reference/` para análisis
 - [x] **GitHub Actions habilitado** en el fork y **CI en verde**: runs #1, #2 y #3 con `Build` + `Inspect payload` + `Upload ELF artifact` correctos (≈25 s por build)
 - [x] Verificar que la CI genera `ps5_torrent.elf` sin errores (artefacto `ps5_torrent-elf` descargable)
-- [ ] Cargar el ELF en la consola (loader 9021) y confirmar que **desaparece el SIGILL** del issue #1; adjuntar `klog`
-- [ ] Abrir el panel desde otro dispositivo de la LAN y añadir un `.torrent` de prueba
+- [x] Cargar el ELF en la consola (loader 9021): **carga sin problemas, el SIGILL del issue #1 está resuelto** con el SDK v0.44
+- [x] Abrir el panel desde otro dispositivo de la LAN y añadir un `.torrent` (aceptado correctamente)
+- [ ] **Bug encontrado y corregido**: tras añadir el torrent el panel dejaba de responder. Causa: el announce corre en el bucle principal y el `connect()` a cada peer era bloqueante **sin timeout** (se aplicaba después de conectar) → hasta ~75 s de congelación por peer inalcanzable. Corregido con connect no bloqueante acotado + presupuesto de 4 conexiones por announce. **Pendiente de validar en consola con el ELF nuevo**
+- [ ] Verificación pendiente: descarga completa de un torrent real, estado en el panel y escritura en `/mnt/usb0`
+- [ ] Log del payload: hoy solo va a **klog** (prefijo `[PS5T]`, TCP 3232). Valorar log a fichero + `GET /api/log` para depurar sin herramientas externas
 - [ ] Actualizar `README.md`/`CHANGELOG.md` del fork con el nuevo SDK y la matriz de firmwares
 
 **Hito 0.5 (spike crítico, medio día) — decide la arquitectura**
@@ -45,6 +48,8 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 
 ## Hito 1: Configuración persistente, rutas y reanudación
 
+- [ ] **E/S de red totalmente no bloqueante** (obligatorio): integrar los sockets de peers y de tracker en el `select()` del bucle principal, con estado por conexión, en lugar de `send`/`recv` bloqueantes. Elimina la congelación del panel de raíz (hoy mitigada con timeouts acotados)
+- [ ] Reducir el `gethostbyname()` bloqueante del resolver (caché + límite, o resolver asíncrono)
 - [ ] `src/config/`: config persistente en el directorio de datos del payload (JSON)
 - [ ] Ajustes: ruta de descarga por defecto, extraer automáticamente, borrar comprimido, contraseñas por torrent, autenticación del panel
 - [ ] Validación de rutas libres (absoluta, sin `..`, sin caracteres de control) y creación de `<destino>/torrents/`

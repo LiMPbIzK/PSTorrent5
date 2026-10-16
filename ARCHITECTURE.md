@@ -80,6 +80,7 @@ pstorrent5/
 ## 4. Convenciones de Código y Restricciones Técnicas
 
 * **Concurrencia:** un único hilo. **Prohibido bloquear** el bucle (`http_server_poll()` + `torrent_mgr_tick()` + `usleep`). La extracción, el hash y la descarga avanzan por *presupuesto* (KB/MB por tick). No se comparte estado entre hilos.
+* **Red:** ninguna llamada de socket puede bloquear sin límite, porque el motor comparte hilo con el servidor HTTP. Todo `connect()` usa `net_tcp_connect_timeout()` (no bloqueante + `select()` + `SO_ERROR`) y todo socket lleva `net_set_timeout()` antes de su primer envío o recepción. Además, el número de conexiones nuevas por announce está acotado (`MAX_PEER_CONNECTS_PER_ANNOUNCE`), y la solución definitiva es integrar los sockets de peers en el `select()` del bucle (Hito 1).
 * **E/S de disco:** solo `open()/write()/rename()` POSIX (sin libufs, como el upstream). **Toda publicación de ficheros debe ser atómica** (escribir `.new`/`.upload` + `rename()` en la misma unidad).
 * **Memoria:** buffers estáticos o de tamaño acotado por torrent; nada de reservar por el tamaño total del archivo comprimido (streaming).
 * **Rutas:** toda ruta de usuario se valida (absoluta, sin `..`, sin caracteres de control) y se sanea antes de usarse. Las descargas van siempre a `<config:destino>`, nunca a rutas sueltas.
