@@ -102,8 +102,9 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 - [ ] **Descargar de varios peers a la vez**: ahora cada torrent descarga una sola pieza en curso (correcto pero secuencial); paralelizarlo va junto con la E/S no bloqueante del Hito 1. **Pendiente clave**: sin esto, encontrar 400 seeders no acelera nada, porque solo se usa uno
 - [ ] **Contar bloques en vez de bytes** en la pieza en curso: hoy un bloque duplicado inflaria el contador y forzaria un reintento (el SHA-1 lo detecta, pero es trabajo perdido)
 - [ ] **Embeber un bundle de CAs** y validar de verdad la cadena TLS: hoy `sceHttp2SetSslCallback` la acepta sin verificar porque la tienda del firmware no conoce la jerarquía nueva de Let's Encrypt ("Root YR" → `0x8095F00C`, `SCE_SSL_ERROR_UNKNOWN_CA`)
-- [ ] **4b** Trackers **UDP** (BEP-15)
-- [ ] **4c** **DHT** (BEP-5 + KRPC) para magnet sin trackers
+- [x] **4b** Trackers **UDP** (BEP-15) implementados: `announce_udp()` en `tracker.c` (connect + announce, timeouts de 3 s por peticion) y `udp://` aceptado en la lista. **Medido desde la red del usuario**: `tracker.opentrackr.org:1337` → 30 peers, `open.demonii.com:1337` → 16, `tracker.torrent.eu.org:451` → 11, para el mismo torrent en el que el tracker de Ubuntu da uno. `exodus.desync.com` y `tracker.openbittorrent.com` no contestan desde aquí y no se incluyen
+- [x] **Lista extra de trackers** (`tracker_extra_list()` en `tracker.c`): los tres UDP que respondieron se prueban en **todos** los torrents, ademas de los suyos. **Ojo**: se anuncian a trackers publicos tambien los torrents de tracker privado (no hay flag `private` en el parser); si molesta, vaciar la lista. Y el cursor por rondas (`announce_cursor`) es imprescindible: sin el, los dos primeros trackers que contestan bien acaparan todas las rondas y los extra no se probarian nunca
+- [x] **4c** **DHT** (BEP-5 + KRPC) implementada (`src/dht.c`): tabla de 256 nodos, `wants` por info_hash, bootstrap contra 4 routers, `get_peers`/`announce_peer`, autoprueba del formato al arrancar y estado en el log cada minuto. **Limitacion medida en esta red: los routers DHT no contestan** (con NTP, DNS y los trackers UDP funcionando, o sea que el UDP no esta bloqueado en general: o son esos routers o la red filtra DHT en concreto). El codigo se queda porque en otras redes sí sirve; en esta, la fuente de peers son los trackers UDP
 
 ---
 
