@@ -47,6 +47,7 @@
 #include "net_http.h"
 
 static int etahen_jailbreak_active = 0;
+static volatile int shutdown_requested = 0;
 
 static void json_escape_text(const char *input, char *output, size_t output_size)
 {
@@ -392,6 +393,30 @@ static http_response_t *handle_api_status(const http_request_t *req)
 }
 
 /**
+ * API: Stop the payload cleanly.
+ *
+ * A payload launcher cannot replace a running payload: the old instance keeps
+ * port 12389 busy and the new one fails to start. This endpoint lets the
+ * process close everything from the inside, so tools/deploy.ps1 can upload a
+ * new ELF without rebooting the console.
+ *
+ * POST /api/quit
+ */
+static http_response_t *handle_api_quit(const http_request_t *req)
+{
+    static const char body[] = "{\"success\":true,\"stopping\":true}";
+
+    if (req->method != HTTP_POST)
+        return json_error(405, "post_required", "POST required");
+
+    shutdown_requested = 1;
+    ui_log("Shutdown requested through the web API");
+
+    return http_response_new(200, "application/json", body,
+                             sizeof(body) - 1);
+}
+
+/**
  * API: Serve the tail of the payload log as text/plain.
  *
  * The log also lives in a file on the console (see log_init), so it can be
@@ -549,6 +574,7 @@ int main(void)
     http_server_register("/api/paths", handle_api_paths);
     http_server_register("/api/status", handle_api_status);
     http_server_register("/api/log", handle_api_log);
+    http_server_register("/api/quit", handle_api_quit);
 
     /* Catch-all web UI handler must remain last. */
     http_server_register("/", handle_web_index);
@@ -641,6 +667,14 @@ int main(void)
 
         /* Small delay to prevent busy-waiting */
         usleep(10000); // 10ms
+
+        /* Cierre pedido por la API: se da un respiro para que la respuesta
+         * HTTP salga antes de liberar el puerto 12389 y terminar. */
+        if (shutdown_requested) {
+            ui_log("Stopping as requested; the port will be released");
+            usleep(500000);
+            break;
+        }
     }
 
     /* Cleanup */

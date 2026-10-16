@@ -24,6 +24,7 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 - [ ] Verificación pendiente: descarga completa de un torrent real, estado en el panel y escritura en `/mnt/usb0`
 - [x] **Log a fichero implementado**: `/data/pstorrent5/pstorrent5.log` (reserva en `/data` y `/tmp`), rotación a 256 KB, volcado sin buffer para que sobreviva a una caída, visible en **`GET /api/log`** y en la ruta que muestra el panel. Se añaden trazas al motor (arranque del torrent, resultado del announce y errores)
 - [ ] Actualizar `README.md`/`CHANGELOG.md` del fork con el nuevo SDK y la matriz de firmwares
+- [x] **Cierre limpio e iteración rápida**: `POST /api/quit` cierra el payload desde dentro y `tools/deploy.ps1 -PS5Host <ip> -Build` hace el ciclo completo (compilar → parar el anterior → esperar a que libere el puerto → subir el ELF → verificar el panel). Solo `POST`
 - [ ] **Regenerar el arte del tile**: `pkg/sce_sys/icon0.png`, `pic0.png` y `pic1.png` son los del proyecto original y llevan el nombre "PS5Torrent" dibujado. `pkg/generate_icon.py` ya escribe "PSTorrent5", así que basta regenerarlos (requiere Pillow) o retocar el arte
 
 **Hito 0.5 (spike crítico, medio día) — decide la arquitectura**

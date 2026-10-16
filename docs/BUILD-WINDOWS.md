@@ -82,6 +82,37 @@ en Linux, pero sobre clang de Windows:
 - `llvm-readelf` avisa de `invalid PT_DYNAMIC`: es esperable, el script de
   enlazado de PS5 no sigue la disposición ELF estándar.
 
+## Desplegar en la consola sin reiniciarla
+
+Un payload **no puede reemplazar a otro que sigue en marcha**: la instancia
+antigua mantiene ocupado el puerto 12389 y la nueva falla con
+`Failed to start HTTP server on port 12389`. Por eso el motor expone
+`POST /api/quit`, que lo cierra limpiamente desde dentro.
+
+Un solo comando hace el ciclo completo (compilar, parar, subir y verificar):
+
+```powershell
+.\tools\deploy.ps1 -PS5Host 192.168.1.50 -Build
+```
+
+Sin `-Build` despliega el ELF ya compilado. Otros parámetros útiles:
+`-LoaderPort 9020` (otros enviadores), `-Elf <ruta>`.
+
+Equivalente manual:
+
+```powershell
+# 1. parar la instancia en marcha (si la hay)
+curl.exe -sS -X POST http://192.168.1.50:12389/api/quit
+
+# 2. subir el ELF nuevo al loader
+curl.exe -sS --data-binary "@pstorrent5.elf" http://192.168.1.50:9021/
+```
+
+Si la instancia que quedó atascada es **anterior** a este endpoint (no responde
+a `/api/quit`), hay que terminarla desde el **gestor de procesos de pldmgr**
+(`http://<IP_PS5>:8084/`) o reiniciar la consola. A partir de ahí, el ciclo se
+hace siempre con `deploy.ps1`.
+
 ## Validación
 
 Un build correcto debe mostrar:
