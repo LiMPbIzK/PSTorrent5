@@ -11,7 +11,7 @@
  */
 #define PEER_HANDSHAKE_LEN  68
 #define PEER_BLOCK_SIZE     (16 * 1024)  // 16KB blocks
-#define PEER_MAX_REQUESTS   5             // Pipelined requests
+#define PEER_MAX_REQUESTS   16            // Pipelined requests
 #define PEER_MSG_KEEPALIVE  -1
 #define PEER_MSG_CHOKE      0
 #define PEER_MSG_UNCHOKE    1
@@ -66,6 +66,15 @@ int peer_handshake(int sock,
  * Send an "interested" message.
  */
 int peer_send_interested(int sock);
+
+/**
+ * Send a keep-alive (zero-length message).
+ *
+ * Un peer que no recibe nada durante dos o tres minutos nos cierra la
+ * conexion, y con enjambres pequenos perder al unico peer que tenemos es
+ * quedarse sin descarga. Es obligatorio en el protocolo.
+ */
+int peer_send_keepalive(int sock);
 
 /**
  * Send a "request" message for a block.

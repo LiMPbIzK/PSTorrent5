@@ -60,8 +60,14 @@ int peer_send_interested(int sock)
     return net_send_all(sock, msg, 5);
 }
 
-int peer_send_request(int sock, uint32_t index, uint32_t begin, uint32_t length)
+int peer_send_keepalive(int sock)
 {
+    unsigned char msg[4] = {0, 0, 0, 0};
+
+    return net_send_all(sock, msg, 4);
+}
+
+int peer_send_request(int sock, uint32_t index, uint32_t begin, uint32_t length){
     unsigned char msg[17];
     uint32_t len = htonl(13); // 1 (id) + 12 (payload)
     memcpy(msg, &len, 4);

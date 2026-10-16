@@ -271,6 +271,31 @@ static void rx_drop(managed_torrent_t *mt)
     rx_reset(mt);
 }
 
+/**
+ * Cierra una conexion de peer y deja el hueco reutilizable.
+ *
+ * Se centraliza aqui porque se cierra desde tres sitios (error de lectura,
+ * fallo de keep-alive y parada del torrent) y olvidar el `rx_drop` deja la
+ * pieza a medias marcada como pedida para siempre.
+ */
+static void peer_close(managed_torrent_t *mt, int peer_idx)
+{
+    torrent_peer_t *p = &mt->peers[peer_idx];
+
+    if (p->sock >= 0)
+        net_close(p->sock);
+    p->sock = -1;
+    free(p->bitfield);
+    p->bitfield = NULL;
+    p->bitfield_len = 0;
+    p->has_bitfield = 0;
+
+    if (mt->active_peers > 0)
+        mt->active_peers--;
+    if (mt->rx_peer == peer_idx)
+        rx_drop(mt);
+}
+
 int torrent_mgr_start(int index)
 {
     if (index < 0 || index >= num_torrents) return -1;
@@ -613,6 +638,9 @@ static int announce_to_tracker(managed_torrent_t *mt)
             p->am_interested = 0;
             p->last_request = 0;
             p->messages_seen = 0;
+            p->last_keepalive = get_time_sec();
+            p->downloaded = 0;
+            p->uploaded = 0;
 
             /* Bitfield del peer: se reserva ya para poder copiarlo en cuanto
              * llegue (es lo que permite pedirle solo lo que tiene). */
@@ -686,16 +714,7 @@ static void process_peer(managed_torrent_t *mt, int peer_idx)
     if (ret < 0) {
         ui_log("peer %d disconnected (last msg id %u)",
                peer_idx, (unsigned)msg.msg_id);
-        net_close(p->sock);
-        p->sock = -1;
-        free(p->bitfield);
-        p->bitfield = NULL;
-        p->bitfield_len = 0;
-        p->has_bitfield = 0;
-        if (mt->active_peers > 0)
-            mt->active_peers--;
-        if (mt->rx_peer == peer_idx)
-            rx_drop(mt);
+        peer_close(mt, peer_idx);
         return;
     }
 
@@ -917,44 +936,64 @@ int torrent_mgr_tick(void)
             }
         }
 
-        /* Re-announce to tracker periodically */
-        if (mt->tracker_interval > 0 &&
-            now - mt->last_announce_time >= (uint64_t)mt->tracker_interval) {
-            announce_to_tracker(mt);
-            mt->last_announce_time = now;
+        /* Re-announce. El intervalo que pide el tracker (1800 s en el de
+         * Ubuntu) es demasiado largo mientras nos faltan peers: ese tracker
+         * entrega UN peer por vuelta, asi que esperar media hora para pedir
+         * otro no construye enjambre ninguno. Con pocos peers se vuelve antes. */
+        {
+            uint64_t interval = (uint64_t)mt->tracker_interval;
+
+            if (mt->active_peers == 0)
+                interval = 30;
+            else if (mt->active_peers < 4 && (interval == 0 || interval > 120))
+                interval = 120;
+
+            if (interval > 0 && now - mt->last_announce_time >= interval) {
+                announce_to_tracker(mt);
+                mt->last_announce_time = now;
+            }
         }
 
-        /* Initial announce */
-        if (mt->last_announce_time == 0) {
-            announce_to_tracker(mt);
-            mt->last_announce_time = now;
-        }
-
-        /* Process peers with non-blocking reads */
+        /* Process peers with non-blocking reads. Se drena todo lo disponible:
+         * un mensaje por vuelta ataba la descarga a la cadencia del bucle y
+         * dejaba bloques esperando en el socket. */
         for (int p = 0; p < mt->num_peers; p++) {
-            torrent_peer_t *peer = &mt->peers[p];
-            if (peer->sock >= 0) {
-                /* Set very short timeout for non-blocking check */
+            if (mt->peers[p].sock < 0)
+                continue;
+
+            for (int guard = 0; guard < 64; guard++) {
                 struct timeval tv = {0, 0};
                 fd_set readfds;
                 FD_ZERO(&readfds);
-                FD_SET(peer->sock, &readfds);
+                FD_SET(mt->peers[p].sock, &readfds);
 
-                if (select(peer->sock + 1, &readfds, NULL, NULL, &tv) > 0) {
-                    process_peer(mt, p);
-                }
+                if (select(mt->peers[p].sock + 1, &readfds, NULL, NULL, &tv) <= 0)
+                    break;
+
+                process_peer(mt, p);
+                if (mt->peers[p].sock < 0)
+                    break;
             }
+        }
+
+        /* Keep-alive: sin esto un peer que no oye nada durante dos minutos nos
+         * cierra la conexion. Con un solo peer, perderlo es quedarse parado. */
+        for (int p = 0; p < mt->num_peers; p++) {
+            torrent_peer_t *peer = &mt->peers[p];
+
+            if (peer->sock < 0 || now - peer->last_keepalive < 120)
+                continue;
+
+            if (peer_send_keepalive(peer->sock) < 0) {
+                ui_log("peer %d keep-alive failed", p);
+                peer_close(mt, p);
+                continue;
+            }
+            peer->last_keepalive = now;
         }
 
         /* Pedir mas bloques: sin esto solo se pediria al recibir algo */
         peer_pump(mt);
-
-        /* If no active peers, try to re-announce. Kept short so that the
-         * bounded peer-connect budget accumulates peers quickly. */
-        if (mt->active_peers == 0 && now - mt->last_announce_time >= 30) {
-            announce_to_tracker(mt);
-            mt->last_announce_time = now;
-        }
     }
 
     return active;

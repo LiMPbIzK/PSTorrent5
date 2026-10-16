@@ -55,7 +55,7 @@
  * Each attempt can block for NET_PEER_CONNECT_TIMEOUT_SEC and the web panel
  * shares the engine's thread, so the work per announce is bounded.
  */
-#define MAX_PEER_CONNECTS_PER_ANNOUNCE 2
+#define MAX_PEER_CONNECTS_PER_ANNOUNCE 8
 
 /**
  * Torrent state.
@@ -93,6 +93,7 @@ typedef struct {
     uint32_t  last_request;
     uint64_t  downloaded;
     uint64_t  uploaded;
+    uint64_t  last_keepalive;
     unsigned  messages_seen;   // Para limitar las trazas de have/bitfield
 
     /* Piezas que tiene el peer. Sin esto se le pediria una que no tiene y los
