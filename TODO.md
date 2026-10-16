@@ -92,6 +92,7 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 - [ ] **4a** BEP-10 (extension handshake) + BEP-9 (`ut_metadata`) usando los trackers `tr=` del magnet
 - [ ] Persistir el `.torrent` obtenido en disco (habilita reanudación del magnet)
 - [x] **4d** Trackers **HTTPS** resueltos con `libSceHttp2`/`libSceSsl` (pila TLS de la consola): `src/net_http.c` hace el GET y devuelve el cuerpo ya sin cabeceras, con timeouts, redirecciones y gzip. **Pendiente de verificar en consola la unidad de los timeouts** (la API sceHttp los quiere en microsegundos; se usan 6 s)
+- [ ] **Embeber un bundle de CAs** y validar de verdad la cadena TLS: hoy `sceHttp2SetSslCallback` la acepta sin verificar porque la tienda del firmware no conoce la jerarquía nueva de Let's Encrypt ("Root YR" → `0x8095F00C`, `SCE_SSL_ERROR_UNKNOWN_CA`)
 - [ ] **4b** Trackers **UDP** (BEP-15)
 - [ ] **4c** **DHT** (BEP-5 + KRPC) para magnet sin trackers
 

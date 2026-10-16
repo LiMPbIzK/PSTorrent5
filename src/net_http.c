@@ -36,6 +36,16 @@ int sceHttp2SetResolveTimeOut(int id, unsigned int usec);
 int sceHttp2SetAutoRedirect(int id, int enable);
 int sceHttp2SetInflateGZIPEnabled(int id, int enable);
 
+/**
+ * Callback de verificacion TLS (firma de Into the `net.hpp` de Itemzflow, que
+ * declara la equivalente de libSceHttp v1).
+ */
+typedef int (*net_http_ssl_cb_t)(int libssl_ctx_id, unsigned int verify_err,
+                                 void *const ssl_cert[], int cert_num,
+                                 void *user_arg);
+
+int sceHttp2SetSslCallback(int id, net_http_ssl_cb_t cb, void *user_arg);
+
 /* La pila comparte hilo con el motor y con el panel web: ningun paso debe
  * bloquear mas de esto. */
 #define NET_HTTP_TIMEOUT_USEC (6u * 1000u * 1000u)
@@ -50,10 +60,43 @@ static int net_ctx_id = -1;
 static int net_tmpl_id = -1;
 static int net_http_ready = 0;
 
+/* Error 0x8095F00C de la consola = SCE_SSL_ERROR_UNKNOWN_CA */
+#define NET_HTTP_ERR_UNKNOWN_CA 0x8095F00Cu
+
+/**
+ * Callback de verificacion TLS.
+ *
+ * La tienda de CA de la consola es la del firmware y no incluye raices
+ * modernas: el 2026 Let's Encrypt migro a una jerarquia nueva ("Root YR") que
+ * el PS5 no conoce, asi que el handshake falla con UNKNOWN_CA y el tracker
+ * HTTPS queda inaccesible.
+ *
+ * Devolver 0 acepta la cadena. Es una concesion consciente: el tracker solo
+ * sirve para descubrir peers y el contenido descargado se verifica igualmente
+ * pieza a pieza con SHA-1, de modo que un tracker suplantado no puede inyectar
+ * datos. Queda en el log cada vez que se acepta una cadena no verificada.
+ */
+static int net_http_ssl_callback(int libssl_ctx_id, unsigned int verify_err,
+                                 void *const ssl_cert[], int cert_num,
+                                 void *user_arg)
+{
+    (void)libssl_ctx_id;
+    (void)ssl_cert;
+    (void)user_arg;
+
+    if (verify_err)
+        ui_log("http: TLS chain not verified (0x%x, %d cert(s)); accepted",
+               verify_err, cert_num);
+
+    return 0;
+}
+
 static void http_apply_timeouts(int id)
 {
     int rc;
 
+    rc = sceHttp2SetSslCallback(id, net_http_ssl_callback, NULL);
+    if (rc) ui_log("http: SetSslCallback -> 0x%x", rc);
     rc = sceHttp2SetResolveTimeOut(id, NET_HTTP_TIMEOUT_USEC);
     if (rc) ui_log("http: SetResolveTimeOut -> 0x%x", rc);
     rc = sceHttp2SetConnectTimeOut(id, NET_HTTP_TIMEOUT_USEC);
