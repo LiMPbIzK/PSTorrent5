@@ -78,6 +78,8 @@ int peer_send_request(int sock, uint32_t index, uint32_t begin, uint32_t length)
  * @param piece_index   Output: piece index
  * @param piece_begin   Output: offset within piece
  * @param data          Output buffer for piece data
+ * @param data_size     Size of the output buffer (blocks larger than this are
+ *                      truncated, never overflowed)
  * @param data_len      Output: length of received data
  * @param out_msg_id    Output: message id received (choke/unchoke/have...).
  *                      Necesario para saber si el peer nos ha desbloqueado,
@@ -89,6 +91,7 @@ int peer_recv_message(int sock,
                       uint32_t *piece_index,
                       uint32_t *piece_begin,
                       unsigned char *data,
+                      size_t data_size,
                       uint32_t *data_len,
                       uint8_t *out_msg_id,
                       int timeout_sec);

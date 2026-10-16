@@ -82,6 +82,7 @@ int peer_recv_message(int sock,
                       uint32_t *piece_index,
                       uint32_t *piece_begin,
                       unsigned char *data,
+                      size_t data_size,
                       uint32_t *data_len,
                       uint8_t *out_msg_id,
                       int timeout_sec)
@@ -154,13 +155,28 @@ int peer_recv_message(int sock,
         uint32_t block_len = msg_len - 9;
 
         if (data && block_len > 0) {
-            if (net_recv_exact(sock, data, block_len) < 0)
+            /* Un peer puede mandar bloques mayores de lo pedido: se lee solo
+             * lo que cabe en el buffer y se descarta el resto, para no
+             * desbordarlo. */
+            uint32_t keep = block_len;
+            if (data_size > 0 && keep > data_size)
+                keep = (uint32_t)data_size;
+
+            if (net_recv_exact(sock, data, keep) < 0)
                 return -1;
+
+            uint32_t rest = block_len - keep;
+            if (rest > 0) {
+                unsigned char *skip = malloc(rest);
+                if (skip) { net_recv_exact(sock, skip, rest); free(skip); }
+                block_len = keep;
+            }
         } else {
             unsigned char *skip = malloc(block_len);
             if (!skip) return -1;
             net_recv_exact(sock, skip, block_len);
             free(skip);
+            block_len = 0;
         }
 
         if (piece_index) *piece_index = ntohl(net_idx);

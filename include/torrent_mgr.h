@@ -93,6 +93,7 @@ typedef struct {
     uint32_t  last_request;
     uint64_t  downloaded;
     uint64_t  uploaded;
+    unsigned  messages_seen;   // Para limitar las trazas de have/bitfield
 } torrent_peer_t;
 
 /**
@@ -164,6 +165,7 @@ typedef struct {
     int            rx_pending;  // Bloques pedidos y aun no recibidos
     int            rx_peer;     // Peer que la esta sirviendo (-1 = ninguno)
     size_t         rx_pieces_done; // Piezas completadas, para trazar progreso
+    size_t         rx_blocks;   // Bloques recibidos, para trazar progreso
 } managed_torrent_t;
 
 /**

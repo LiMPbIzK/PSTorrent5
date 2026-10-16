@@ -661,10 +661,13 @@ static void process_peer(managed_torrent_t *mt, int peer_idx)
     uint8_t msg_id = 0xff;
 
     int ret = peer_recv_message(p->sock, &piece_idx, &piece_begin,
-                                block_buf, &block_len, &msg_id, 0);
+                                block_buf, sizeof(block_buf), &block_len,
+                                &msg_id, 0);
 
     if (ret < 0) {
         /* Peer disconnected */
+        ui_log("peer %d disconnected (last msg id %u)",
+               peer_idx, (unsigned)msg_id);
         net_close(p->sock);
         p->sock = -1;
         if (mt->active_peers > 0)
@@ -672,6 +675,21 @@ static void process_peer(managed_torrent_t *mt, int peer_idx)
         if (mt->rx_peer == peer_idx)
             rx_drop(mt);
         return;
+    }
+
+    /* Traza del dialogo: sin esto no se ve si el peer responde a las
+     * peticiones. Los bloques de datos se cuentan aparte para no inundar. */
+    if (msg_id != PEER_MSG_PIECE && msg_id != 0xff) {
+        if (msg_id == PEER_MSG_HAVE || msg_id == PEER_MSG_BITFIELD) {
+            /* Muy frecuentes: solo los primeros de cada peer */
+            if (p->messages_seen < 3) {
+                p->messages_seen++;
+                ui_log("peer %d msg id %u (%s)", peer_idx, (unsigned)msg_id,
+                       msg_id == PEER_MSG_HAVE ? "have" : "bitfield");
+            }
+        } else {
+            ui_log("peer %d msg id %u", peer_idx, (unsigned)msg_id);
+        }
     }
 
     /* El mensaje que importa: sin esto el peer sigue "choked" para siempre y
@@ -700,6 +718,13 @@ static void process_peer(managed_torrent_t *mt, int peer_idx)
         memcpy(mt->rx_buf + piece_begin, block_buf, block_len);
         mt->rx_have += block_len;
         p->downloaded += block_len;
+        mt->rx_blocks++;
+
+        if (mt->rx_blocks <= 3 || mt->rx_blocks % 200 == 0) {
+            ui_log("block %zu: piece %u begin %u len %u (%u/%u of piece)",
+                   mt->rx_blocks, piece_idx, piece_begin, block_len,
+                   mt->rx_have, mt->rx_length);
+        }
 
         if (mt->rx_have < mt->rx_length)
             return;  /* Pieza incompleta: faltan bloques */
