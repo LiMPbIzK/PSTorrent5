@@ -586,9 +586,10 @@ static int announce_to_tracker(managed_torrent_t *mt)
                  "Peers were found, but the connections failed; will retry automatically");
     }
     mt->error_type = TERR_NO_PEERS;
-    ui_log("announce failed: %s (trackers_ok=%d peers_offered=%d tried=%d "
-           "failed=%d): %s", mt->error_code, contacted, peers_reported,
-           connects_this_round, connects_failed, mt->error_msg);
+    ui_log("announce failed: %s (trackers_tried=%d ok=%d peers_offered=%d "
+           "peer_connects=%d failed=%d): %s", mt->error_code, tried_trackers,
+           contacted, peers_reported, connects_this_round, connects_failed,
+           mt->error_msg);
     return -1;
 }
 

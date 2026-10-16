@@ -542,6 +542,7 @@ int main(void)
     /* Console HTTP/SSL stack: needed for https:// trackers (and later for the
      * self-updater). Non-fatal: without it only plain HTTP works. */
     net_http_init("PSTorrent5/" PSTORRENT5_VERSION);
+    net_http_selftest();
 
     /* fPKGs start sandboxed. etaHEN can grant filesystem access through its
      * local command service; payloads sent to an ELF loader may already have

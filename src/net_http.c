@@ -52,12 +52,20 @@ static int net_http_ready = 0;
 
 static void http_apply_timeouts(int id)
 {
-    sceHttp2SetResolveTimeOut(id, NET_HTTP_TIMEOUT_USEC);
-    sceHttp2SetConnectTimeOut(id, NET_HTTP_TIMEOUT_USEC);
-    sceHttp2SetSendTimeOut(id, NET_HTTP_TIMEOUT_USEC);
-    sceHttp2SetRecvTimeOut(id, NET_HTTP_TIMEOUT_USEC);
-    sceHttp2SetAutoRedirect(id, 1);
-    sceHttp2SetInflateGZIPEnabled(id, 1);
+    int rc;
+
+    rc = sceHttp2SetResolveTimeOut(id, NET_HTTP_TIMEOUT_USEC);
+    if (rc) ui_log("http: SetResolveTimeOut -> 0x%x", rc);
+    rc = sceHttp2SetConnectTimeOut(id, NET_HTTP_TIMEOUT_USEC);
+    if (rc) ui_log("http: SetConnectTimeOut -> 0x%x", rc);
+    rc = sceHttp2SetSendTimeOut(id, NET_HTTP_TIMEOUT_USEC);
+    if (rc) ui_log("http: SetSendTimeOut -> 0x%x", rc);
+    rc = sceHttp2SetRecvTimeOut(id, NET_HTTP_TIMEOUT_USEC);
+    if (rc) ui_log("http: SetRecvTimeOut -> 0x%x", rc);
+    rc = sceHttp2SetAutoRedirect(id, 1);
+    if (rc) ui_log("http: SetAutoRedirect -> 0x%x", rc);
+    rc = sceHttp2SetInflateGZIPEnabled(id, 1);
+    if (rc) ui_log("http: SetInflateGZIPEnabled -> 0x%x", rc);
 }
 
 int net_http_init(const char *user_agent)
@@ -108,6 +116,32 @@ int net_http_available(void)
     return net_http_ready;
 }
 
+/**
+ * Autoprueba de la pila, una vez al arrancar: separa "la pila no funciona en
+ * este entorno" de "esta URL concreta falla". La primera comprueba HTTP y la
+ * segunda HTTPS, de modo que un fallo solo en la segunda senala al TLS/DNS y un
+ * fallo en ambas a la propia pila.
+ */
+void net_http_selftest(void)
+{
+    unsigned char buf[2048];
+    int status;
+    int got;
+
+    if (!net_http_ready)
+        return;
+
+    status = 0;
+    got = net_http_get("http://example.com/", buf, sizeof(buf), &status);
+    ui_log("http selftest: HTTP  example.com -> %d bytes, status %d",
+           got, status);
+
+    status = 0;
+    got = net_http_get("https://example.com/", buf, sizeof(buf), &status);
+    ui_log("http selftest: HTTPS example.com -> %d bytes, status %d",
+           got, status);
+}
+
 int net_http_get(const char *url, unsigned char *out, size_t out_size,
                  int *status)
 {
@@ -127,14 +161,24 @@ int net_http_get(const char *url, unsigned char *out, size_t out_size,
 
     http_apply_timeouts(request);
 
-    if (sceHttp2SendRequest(request, NULL, 0) != 0) {
-        ui_log("http: request failed for %s", url);
-        sceHttp2DeleteRequest(request);
-        return -1;
+    {
+        int rc = sceHttp2SendRequest(request, NULL, 0);
+        if (rc != 0) {
+            /* El codigo distingue: 0x80431xxx = HTTP (parametros, DNS,
+             * conexion), 0x80435xxx = SSL/certificados. */
+            ui_log("http: send failed for %s (0x%x)", url, rc);
+            sceHttp2DeleteRequest(request);
+            return -1;
+        }
     }
 
-    if (sceHttp2GetStatusCode(request, &code) == 0 && status)
-        *status = code;
+    {
+        int rc = sceHttp2GetStatusCode(request, &code);
+        if (rc != 0)
+            ui_log("http: GetStatusCode failed (0x%x)", rc);
+        else if (status)
+            *status = code;
+    }
 
     /* Se lee el cuerpo tanto en respuestas correctas como en errores: el
      * tracker explica el motivo dentro del propio bencode. */

@@ -41,6 +41,12 @@ int net_http_get(const char *url, unsigned char *out, size_t out_size,
                  int *status);
 
 /**
+ * Prueba la pila contra dos URLs conocidas (una HTTP y otra HTTPS) y lo deja
+ * en el log. Sirve para saber si un fallo de tracker es de la pila o de la URL.
+ */
+void net_http_selftest(void);
+
+/**
  * Libera los recursos de la pila HTTP.
  */
 void net_http_shutdown(void);
