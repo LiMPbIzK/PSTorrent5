@@ -44,6 +44,7 @@
 #include "web_content.h"
 #include "version.h"
 #include "log.h"
+#include "net_http.h"
 
 static int etahen_jailbreak_active = 0;
 
@@ -513,6 +514,10 @@ int main(void)
         return 1;
     }
 
+    /* Console HTTP/SSL stack: needed for https:// trackers (and later for the
+     * self-updater). Non-fatal: without it only plain HTTP works. */
+    net_http_init("PSTorrent5/" PSTORRENT5_VERSION);
+
     /* fPKGs start sandboxed. etaHEN can grant filesystem access through its
      * local command service; payloads sent to an ELF loader may already have
      * the required privileges and continue normally when the service is off. */
@@ -642,6 +647,7 @@ int main(void)
     ui_log("Shutting down...");
     torrent_mgr_shutdown();
     http_server_shutdown();
+    net_http_shutdown();
     net_cleanup();
     ps5_browser_shutdown();
     log_close();

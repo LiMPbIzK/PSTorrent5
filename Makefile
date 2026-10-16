@@ -31,6 +31,7 @@ TARGET = pstorrent5
 # Source files
 SRCS = src/main.c \
        src/log.c \
+       src/net_http.c \
        src/sha1.c \
        src/bencode.c \
        src/torrent.c \
@@ -59,7 +60,7 @@ CFLAGS = -O2 \
          -Wno-unused-parameter
 
 # Linker flags
-LDLIBS = -lufs -lSceSystemService -lSceUserService
+LDLIBS = -lufs -lSceSystemService -lSceUserService -lSceSsl -lSceHttp2 -lSceNet
 
 all: $(TARGET).elf
 

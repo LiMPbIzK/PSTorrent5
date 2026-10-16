@@ -33,7 +33,7 @@
 * **Librerías Principales:**
   * **libarchive 3.7.4** (fase 2a, ya preparada en `scripts/setup_archive_deps.sh`): ZIP (incl. cifrado), 7z y RAR sin cifrar. Requiere zlib + liblzma + bzip2 (+ zstd si se activa). **No soporta 7z ni RAR cifrados.**
   * **7-Zip (código `Alone2/makefile.gcc`, `ST_MODE=1`)** (fase 2b): cubre contraseñas, cabeceras cifradas y multi-volumen. Se enlaza **solo la capa de códecs + `UI/Common` mínimo** vía `IInArchive`, con `ISequentialOutStream` propio e `ICryptoGetTextPassword`. **No compilar la CLI** (evita `locale`/`argv`/consola).
-  * **Pila TLS de la consola**: stubs del SDK `libSceHttp`, `libSceHttp2`, `libSceSsl`, `libSceNet`. **No se porta mbedTLS/OpenSSL.** Sirve para el auto-updater y para los trackers HTTPS.
+  * **Pila TLS de la consola (EN USO)**: `src/net_http.c` envuelve `libSceHttp2` + `libSceSsl` para los trackers **HTTPS** (`samples/http2_get` del SDK es la referencia). El SDK no trae cabeceras: las firmas se declaran en `net_http.c` y se enlazan `-lSceSsl -lSceHttp2 -lSceNet`. **No se porta mbedTLS/OpenSSL.** Sirve también para el futuro auto-updater.
   * **miniz** (solo si se reutiliza el kit de self-update del boilerplate) para validar/desempaquetar el ZIP de actualización.
   * **libSceAppInstUtil** (stub disponible) reservado para un futuro auto-update nativo del `.pkg`.
   * Enlazado actual del motor: `-lufs -lSceSystemService -lSceUserService`.

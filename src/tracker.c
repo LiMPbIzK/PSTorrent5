@@ -1,5 +1,6 @@
 #include "tracker.h"
 #include "net_utils.h"
+#include "net_http.h"
 #include "bencode.h"
 #include "ui.h"
 #include <stdlib.h>
@@ -110,12 +111,24 @@ tracker_response_t *tracker_announce(const char *tracker_url,
 {
     if (!tracker_url || !params) return NULL;
 
-    /* Parse tracker URL: http://host:port/announce */
-    const char *url = tracker_url;
+    /* URL del tracker: http://host:port/announce o https://host/announce */
+    const char *full_url = tracker_url;
+    int use_https = strncmp(full_url, "https://", 8) == 0;
+    const char *url;
 
-    /* Check for http:// */
-    if (strncmp(url, "http://", 7) != 0) return NULL;
-    url += 7;
+    if (use_https) {
+        /* HTTPS lo sirve la pila de la consola (libSceHttp2 + libSceSsl). */
+        if (!net_http_available()) {
+            ui_log("announce: %s needs HTTPS and the console HTTP stack is "
+                   "not available", full_url);
+            return NULL;
+        }
+        url = full_url + 8;
+    } else if (strncmp(full_url, "http://", 7) == 0) {
+        url = full_url + 7;
+    } else {
+        return NULL;
+    }
 
     /* Find host[:port]/path */
     const char *path_start = strchr(url, '/');
@@ -123,7 +136,7 @@ tracker_response_t *tracker_announce(const char *tracker_url,
 
     /* Parse host and optional port */
     char host[256];
-    int port = 80; // default HTTP port
+    int port = use_https ? 443 : 80;
     const char *port_str = NULL;
     size_t host_len;
 
@@ -150,23 +163,16 @@ tracker_response_t *tracker_announce(const char *tracker_url,
     char peer_id_enc[100];
     net_url_encode(params->peer_id, 20, peer_id_enc);
 
-    char request[4096];
-    int req_len = snprintf(request, sizeof(request),
-        "GET %s%cinfo_hash=%s"
+    char query[1024];
+    int query_len = snprintf(query, sizeof(query),
+        "info_hash=%s"
         "&peer_id=%s"
         "&port=%u"
         "&uploaded=%lld"
         "&downloaded=%lld"
         "&left=%lld"
         "&compact=%d"
-        "&numwant=%d"
-        " HTTP/1.0\r\n"
-        "Host: %s\r\n"
-        "User-Agent: PSTorrent5/1.1\r\n"
-        "Connection: close\r\n"
-        "\r\n",
-        path_start,
-        strchr(path_start, '?') ? '&' : '?',
+        "&numwant=%d",
         info_hash_enc,
         peer_id_enc,
         (unsigned int)params->port,
@@ -174,70 +180,105 @@ tracker_response_t *tracker_announce(const char *tracker_url,
         (long long)params->downloaded,
         (long long)params->left,
         params->compact ? 1 : 0,
-        MAX_TRACKER_PEERS,
+        MAX_TRACKER_PEERS);
+
+    if (query_len < 0 || (size_t)query_len >= sizeof(query)) return NULL;
+
+    char request[4096];
+    int req_len = snprintf(request, sizeof(request),
+        "GET %s%c%s"
+        " HTTP/1.0\r\n"
+        "Host: %s\r\n"
+        "User-Agent: PSTorrent5/1.1\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        path_start,
+        strchr(path_start, '?') ? '&' : '?',
+        query,
         host);
 
     if (req_len < 0 || (size_t)req_len >= sizeof(request)) return NULL;
 
-    /* Resolve host and connect */
-    uint32_t addr;
-    ui_log("announce: probing %s:%u%s", host, (unsigned)port, path_start);
-
-    if (net_resolve(host, &addr) < 0) {
-        ui_log("announce: could not resolve '%s'", host);
-        return NULL;
-    }
-
-    ui_log("announce: resolved, connecting (timeout %ds)",
-           NET_TRACKER_CONNECT_TIMEOUT_SEC);
-
-    int sock = net_tcp_connect_timeout(addr, (uint16_t)port,
-                                       NET_TRACKER_CONNECT_TIMEOUT_SEC);
-    if (sock < 0) {
-        ui_log("announce: connect to %s:%u failed", host, (unsigned)port);
-        return NULL;
-    }
-
-    /* Set timeout */
-    net_set_timeout(sock, NET_TRACKER_IO_TIMEOUT_SEC);
-    ui_log("announce: connected, sending request (%d bytes)", req_len);
-
-    /* Send HTTP request */
-    if (net_send_all(sock, request, (size_t)req_len) < 0) {
-        ui_log("announce: send failed");
-        net_close(sock);
-        return NULL;
-    }
-
-    /* Receive response (use a large buffer) */
+    /* Transport. HTTPS va por la pila de la consola (que ya devuelve el cuerpo
+     * sin cabeceras); HTTP en claro usa el cliente propio. */
     unsigned char resp_buf[HTTP_BUF_SIZE * 4];
     size_t resp_pos = 0;
+    int status_code = 0;
+    const unsigned char *body = NULL;
+    size_t body_len = 0;
 
-    while (resp_pos < sizeof(resp_buf)) {
-        int n = net_recv_some(sock, resp_buf + resp_pos,
-                              sizeof(resp_buf) - resp_pos);
-        if (n <= 0) break;
-        resp_pos += (size_t)n;
+    if (use_https) {
+        char url_with_query[4096];
+        int url_len = snprintf(url_with_query, sizeof(url_with_query), "%s%c%s",
+                               full_url, strchr(full_url, '?') ? '&' : '?', query);
+        int got;
+
+        if (url_len < 0 || (size_t)url_len >= sizeof(url_with_query)) return NULL;
+
+        got = net_http_get(url_with_query, resp_buf, sizeof(resp_buf),
+                           &status_code);
+        ui_log("announce: HTTPS GET %s -> %d bytes, status %d",
+               host, got, status_code);
+        if (got < 0) return NULL;
+
+        resp_pos = (size_t)got;
+        body = resp_buf;
+        body_len = resp_pos;
+    } else {
+        /* Resolve host and connect */
+        uint32_t addr;
+
+        ui_log("announce: probing %s:%u%s", host, (unsigned)port, path_start);
+
+        if (net_resolve(host, &addr) < 0) {
+            ui_log("announce: could not resolve '%s'", host);
+            return NULL;
+        }
+
+        ui_log("announce: resolved, connecting (timeout %ds)",
+               NET_TRACKER_CONNECT_TIMEOUT_SEC);
+
+        int sock = net_tcp_connect_timeout(addr, (uint16_t)port,
+                                           NET_TRACKER_CONNECT_TIMEOUT_SEC);
+        if (sock < 0) {
+            ui_log("announce: connect to %s:%u failed", host, (unsigned)port);
+            return NULL;
+        }
+
+        /* Set timeout */
+        net_set_timeout(sock, NET_TRACKER_IO_TIMEOUT_SEC);
+        ui_log("announce: connected, sending request (%d bytes)", req_len);
+
+        /* Send HTTP request */
+        if (net_send_all(sock, request, (size_t)req_len) < 0) {
+            ui_log("announce: send failed");
+            net_close(sock);
+            return NULL;
+        }
+
+        /* Receive response (use a large buffer) */
+        while (resp_pos < sizeof(resp_buf)) {
+            int n = net_recv_some(sock, resp_buf + resp_pos,
+                                  sizeof(resp_buf) - resp_pos);
+            if (n <= 0) break;
+            resp_pos += (size_t)n;
+        }
+
+        net_close(sock);
+
+        ui_log("announce: response %zu bytes", resp_pos);
+
+        if (resp_pos == 0) return NULL;
+
+        if (parse_http_response(resp_buf, resp_pos, &status_code, &body,
+                                &body_len) < 0) {
+            ui_log("announce: could not parse the HTTP response (%zu bytes)",
+                   resp_pos);
+            return NULL;
+        }
+
+        ui_log("announce: HTTP %d, body %zu bytes", status_code, body_len);
     }
-
-    net_close(sock);
-
-    ui_log("announce: response %zu bytes", resp_pos);
-
-    if (resp_pos == 0) return NULL;
-
-    /* Parse HTTP response */
-    int status_code;
-    const unsigned char *body;
-    size_t body_len;
-
-    if (parse_http_response(resp_buf, resp_pos, &status_code, &body, &body_len) < 0) {
-        ui_log("announce: could not parse the HTTP response (%zu bytes)",
-               resp_pos);
-        return NULL;
-    }
-
-    ui_log("announce: HTTP %d, body %zu bytes", status_code, body_len);
 
     tracker_response_t *tr = calloc(1, sizeof(tracker_response_t));
     if (!tr) return NULL;

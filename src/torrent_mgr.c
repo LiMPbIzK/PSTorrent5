@@ -442,7 +442,10 @@ static int announce_to_tracker(managed_torrent_t *mt)
                         ? mt->torrent->announce
                         : mt->torrent->announce_list[
                             url_index - (mt->torrent->announce ? 1u : 0u)];
-        if (!url || strncmp(url, "http://", 7) != 0) continue;
+        if (!url) continue;
+        if (strncmp(url, "http://", 7) != 0 &&
+            strncmp(url, "https://", 8) != 0)
+            continue;
         if (mt->torrent->announce && url != mt->torrent->announce &&
             strcmp(url, mt->torrent->announce) == 0) continue;
 
@@ -572,7 +575,7 @@ static int announce_to_tracker(managed_torrent_t *mt)
     if (contacted == 0) {
         strncpy(mt->error_code, "no_tracker", sizeof(mt->error_code) - 1);
         snprintf(mt->error_msg, sizeof(mt->error_msg),
-                 "No compatible HTTP tracker answered; HTTPS/UDP are not supported yet");
+                 "No tracker answered; see the log for the reason");
     } else if (peers_reported == 0) {
         strncpy(mt->error_code, "no_peers", sizeof(mt->error_code) - 1);
         snprintf(mt->error_msg, sizeof(mt->error_msg),
