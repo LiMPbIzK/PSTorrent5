@@ -34,7 +34,12 @@ def main() -> int:
     ]
     rendered.extend(f"{c_string(chunk)}\n" for chunk in chunks)
     rendered.extend([";\n\n", "#endif /* PS5TORRENT_WEB_CONTENT_H */\n"])
-    output.write_text("".join(rendered), encoding="utf-8")
+
+    # newline="\n": sin traducción de saltos de línea, para que el header sea
+    # byte a byte igual en Windows (build.ps1) y en Linux/macOS (make + CI).
+    with output.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write("".join(rendered))
+
     return 0
 
 
