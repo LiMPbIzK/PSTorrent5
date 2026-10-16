@@ -383,6 +383,10 @@ void torrent_mgr_stop(int index)
             net_close(mt->peers[i].sock);
             mt->peers[i].sock = -1;
         }
+        free(mt->peers[i].bitfield);
+        mt->peers[i].bitfield = NULL;
+        mt->peers[i].bitfield_len = 0;
+        mt->peers[i].has_bitfield = 0;
     }
     mt->num_peers = 0;
     mt->active_peers = 0;
@@ -604,6 +608,17 @@ static int announce_to_tracker(managed_torrent_t *mt)
             p->choked = 1;
             p->am_interested = 0;
             p->last_request = 0;
+            p->messages_seen = 0;
+
+            /* Bitfield del peer: se reserva ya para poder copiarlo en cuanto
+             * llegue (es lo que permite pedirle solo lo que tiene). */
+            if (!p->bitfield) {
+                p->bitfield_len = (mt->torrent->num_pieces + 7) / 8;
+                p->bitfield = calloc(p->bitfield_len, 1);
+            } else {
+                memset(p->bitfield, 0, p->bitfield_len);
+            }
+            p->has_bitfield = 0;
 
             mt->active_peers++;
             connects_ok++;
@@ -652,24 +667,27 @@ static int announce_to_tracker(managed_torrent_t *mt)
 static void process_peer(managed_torrent_t *mt, int peer_idx)
 {
     torrent_peer_t *p = &mt->peers[peer_idx];
+    static unsigned char block_buf[PEER_BLOCK_SIZE];
+    peer_msg_t msg;
+    int ret;
+
     if (p->sock < 0) return;
 
-    /* Static, not automatic: this runs from the main loop and a 16 KB frame is
-     * fine, but keeping it out of the stack is the rule in this project. */
-    static unsigned char block_buf[PEER_BLOCK_SIZE];
-    uint32_t piece_idx = 0, piece_begin = 0, block_len = 0;
-    uint8_t msg_id = 0xff;
+    memset(&msg, 0, sizeof(msg));
+    msg.bitfield = p->bitfield;
+    msg.bitfield_size = p->bitfield_len;
 
-    int ret = peer_recv_message(p->sock, &piece_idx, &piece_begin,
-                                block_buf, sizeof(block_buf), &block_len,
-                                &msg_id, 0);
+    ret = peer_recv_message(p->sock, &msg, block_buf, sizeof(block_buf), 0);
 
     if (ret < 0) {
-        /* Peer disconnected */
         ui_log("peer %d disconnected (last msg id %u)",
-               peer_idx, (unsigned)msg_id);
+               peer_idx, (unsigned)msg.msg_id);
         net_close(p->sock);
         p->sock = -1;
+        free(p->bitfield);
+        p->bitfield = NULL;
+        p->bitfield_len = 0;
+        p->has_bitfield = 0;
         if (mt->active_peers > 0)
             mt->active_peers--;
         if (mt->rx_peer == peer_idx)
@@ -677,53 +695,72 @@ static void process_peer(managed_torrent_t *mt, int peer_idx)
         return;
     }
 
-    /* Traza del dialogo: sin esto no se ve si el peer responde a las
-     * peticiones. Los bloques de datos se cuentan aparte para no inundar. */
-    if (msg_id != PEER_MSG_PIECE && msg_id != 0xff) {
-        if (msg_id == PEER_MSG_HAVE || msg_id == PEER_MSG_BITFIELD) {
-            /* Muy frecuentes: solo los primeros de cada peer */
-            if (p->messages_seen < 3) {
-                p->messages_seen++;
-                ui_log("peer %d msg id %u (%s)", peer_idx, (unsigned)msg_id,
-                       msg_id == PEER_MSG_HAVE ? "have" : "bitfield");
-            }
-        } else {
-            ui_log("peer %d msg id %u", peer_idx, (unsigned)msg_id);
-        }
-    }
-
-    /* El mensaje que importa: sin esto el peer sigue "choked" para siempre y
-     * nunca se pide ni un bloque. */
-    if (msg_id == PEER_MSG_CHOKE) {
+    switch (msg.msg_id) {
+    case PEER_MSG_CHOKE:
         p->choked = 1;
         return;
-    }
-    if (msg_id == PEER_MSG_UNCHOKE) {
+
+    case PEER_MSG_UNCHOKE:
         p->choked = 0;
-        ui_log("peer %d unchoked us", peer_idx);
+        ui_log("peer %d unchoked us%s", peer_idx,
+               p->has_bitfield ? "" : " (bitfield pending)");
+        return;
+
+    case PEER_MSG_BITFIELD: {
+        size_t have = 0;
+        for (size_t i = 0; i < mt->torrent->num_pieces && p->bitfield; i++) {
+            if (p->bitfield[i / 8] & (1u << (7 - (i % 8))))
+                have++;
+        }
+        p->has_bitfield = 1;
+        p->messages_seen++;
+        ui_log("peer %d bitfield: %zu/%zu pieces", peer_idx, have,
+               mt->torrent->num_pieces);
         return;
     }
 
-    if (ret == 0 && block_len > 0) {
-        /* Bloque de datos: se copia en su offset de la pieza en curso. */
-        if (piece_idx != (uint32_t)mt->rx_piece || !mt->rx_buf) {
+    case PEER_MSG_HAVE:
+        if (p->bitfield && msg.piece_index < mt->torrent->num_pieces)
+            p->bitfield[msg.piece_index / 8] |=
+                (unsigned char)(1u << (7 - (msg.piece_index % 8)));
+        if (p->messages_seen < 3) {
+            p->messages_seen++;
+            ui_log("peer %d have piece %u", peer_idx, msg.piece_index);
+        }
+        return;
+
+    case 0xff:
+        return;  /* Keep-alive */
+
+    default:
+        ui_log("peer %d msg id %u", peer_idx, (unsigned)msg.msg_id);
+        return;
+
+    case PEER_MSG_PIECE:
+        break;
+    }
+
+    /* Bloque de datos: se copia en su offset de la pieza en curso. */
+    if (ret == 0 && msg.data_len > 0) {
+        if (p->sock < 0) return;
+        if (msg.piece_index != (uint32_t)mt->rx_piece || !mt->rx_buf) {
             /* De otra pieza (peticion antigua o de otro peer): se descarta */
             return;
         }
-        if ((uint64_t)piece_begin + block_len > mt->rx_length)
+        if ((uint64_t)msg.piece_begin + msg.data_len > mt->rx_length)
             return;
         if (mt->rx_pending > 0)
             mt->rx_pending--;
 
-        memcpy(mt->rx_buf + piece_begin, block_buf, block_len);
-        mt->rx_have += block_len;
-        p->downloaded += block_len;
+        memcpy(mt->rx_buf + msg.piece_begin, block_buf, msg.data_len);
+        mt->rx_have += msg.data_len;
+        p->downloaded += msg.data_len;
         mt->rx_blocks++;
 
         if (mt->rx_blocks <= 3 || mt->rx_blocks % 200 == 0) {
             ui_log("block %zu: piece %u begin %u len %u (%u/%u of piece)",
-                   mt->rx_blocks, piece_idx, piece_begin, block_len,
-                   mt->rx_have, mt->rx_length);
+                   mt->rx_blocks, msg.piece_index, msg.piece_begin,
+                   msg.data_len, mt->rx_have, mt->rx_length);
         }
 
         if (mt->rx_have < mt->rx_length)
@@ -746,7 +783,6 @@ static void process_peer(managed_torrent_t *mt, int peer_idx)
             piece_mgr_failed(&mt->piece_mgr, (size_t)mt->rx_piece);
         }
         rx_reset(mt);
-        return;
     }
 }
 
@@ -772,33 +808,43 @@ static void peer_pump(managed_torrent_t *mt)
         }
     }
 
-    /* Elegir pieza y peer si no hay ninguna en curso */
+    /* Elegir pieza y peer si no hay ninguna en curso. Solo se pide a un peer
+     * que ha anunciado lo que tiene: pedirle una pieza que no posee es una
+     * violacion del protocolo y los clientes desconectan por ello. */
     if (mt->rx_piece < 0) {
         int candidate = -1;
+        int candidate_piece = -1;
+
         for (int i = 0; i < mt->num_peers; i++) {
-            if (mt->peers[i].sock >= 0 && !mt->peers[i].choked) {
+            torrent_peer_t *peer = &mt->peers[i];
+            int piece;
+
+            if (peer->sock < 0 || peer->choked || !peer->has_bitfield)
+                continue;
+
+            piece = piece_mgr_get_next(&mt->piece_mgr, peer->bitfield,
+                                       peer->bitfield_len);
+            if (piece >= 0) {
                 candidate = i;
+                candidate_piece = piece;
                 break;
             }
         }
+
         if (candidate < 0)
-            return;  /* Ningun peer nos ha desbloqueado todavia */
+            return;  /* Ningun peer disponible con piezas que necesitemos */
 
-        int next = piece_mgr_get_next(&mt->piece_mgr, NULL, 0);
-        if (next < 0)
-            return;
-
-        mt->rx_piece = next;
+        mt->rx_piece = candidate_piece;
         mt->rx_length = (uint32_t)mt->torrent->piece_length;
-        if ((size_t)next == mt->torrent->num_pieces - 1) {
+        if ((size_t)candidate_piece == mt->torrent->num_pieces - 1) {
             mt->rx_length = (uint32_t)(mt->torrent->total_size -
-                              (int64_t)next * mt->torrent->piece_length);
+                              (int64_t)candidate_piece * mt->torrent->piece_length);
         }
         mt->rx_have = 0;
         mt->rx_next = 0;
         mt->rx_pending = 0;
         mt->rx_peer = candidate;
-        piece_mgr_request(&mt->piece_mgr, (size_t)next);
+        piece_mgr_request(&mt->piece_mgr, (size_t)candidate_piece);
     }
 
     /* Llenar la ventana de peticiones */

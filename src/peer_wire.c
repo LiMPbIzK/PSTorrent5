@@ -79,15 +79,20 @@ int peer_send_request(int sock, uint32_t index, uint32_t begin, uint32_t length)
 }
 
 int peer_recv_message(int sock,
-                      uint32_t *piece_index,
-                      uint32_t *piece_begin,
+                      peer_msg_t *msg,
                       unsigned char *data,
                       size_t data_size,
-                      uint32_t *data_len,
-                      uint8_t *out_msg_id,
                       int timeout_sec)
 {
-    if (out_msg_id) *out_msg_id = 0xff;
+    uint8_t msg_id;
+
+    if (msg) {
+        msg->msg_id = 0xff;
+        msg->piece_index = 0;
+        msg->piece_begin = 0;
+        msg->data_len = 0;
+        msg->bitfield_len = 0;
+    }
 
     if (net_set_timeout(sock, timeout_sec) < 0)
         return -1;
@@ -105,11 +110,10 @@ int peer_recv_message(int sock,
     }
 
     /* Read message ID */
-    uint8_t msg_id;
     if (net_recv_exact(sock, &msg_id, 1) < 0)
         return -1;
 
-    if (out_msg_id) *out_msg_id = msg_id;
+    if (msg) msg->msg_id = msg_id;
 
     switch (msg_id) {
     case PEER_MSG_CHOKE:
@@ -128,13 +132,32 @@ int peer_recv_message(int sock,
         /* Read piece index (4 bytes) */
         uint32_t net_idx;
         if (net_recv_exact(sock, &net_idx, 4) < 0) return -1;
+        if (msg) msg->piece_index = ntohl(net_idx);
         return 1;
     }
 
     case PEER_MSG_BITFIELD: {
-        /* Read bitfield data */
+        /* Las piezas que tiene el peer: se copian al buffer del llamante para
+         * no pedirle nunca algo que no tiene (los clientes desconectan al
+         * peer que lo hace). */
         uint32_t payload_len = msg_len - 1;
-        /* Skip bitfield for now */
+
+        if (msg && msg->bitfield && payload_len > 0) {
+            uint32_t keep = payload_len;
+            if (keep > msg->bitfield_size)
+                keep = (uint32_t)msg->bitfield_size;
+
+            if (net_recv_exact(sock, msg->bitfield, keep) < 0) return -1;
+            msg->bitfield_len = (int)keep;
+
+            uint32_t rest = payload_len - keep;
+            if (rest > 0) {
+                unsigned char *skip = malloc(rest);
+                if (skip) { net_recv_exact(sock, skip, rest); free(skip); }
+            }
+            return 1;
+        }
+
         if (payload_len > 0) {
             unsigned char *skip = malloc(payload_len);
             if (!skip) return -1;
@@ -179,13 +202,14 @@ int peer_recv_message(int sock,
             block_len = 0;
         }
 
-        if (piece_index) *piece_index = ntohl(net_idx);
-        if (piece_begin) *piece_begin = ntohl(net_begin);
-        if (data_len) *data_len = block_len;
+        if (msg) {
+            msg->piece_index = ntohl(net_idx);
+            msg->piece_begin = ntohl(net_begin);
+            msg->data_len = block_len;
+        }
 
         return 0; // Piece data received
     }
-
     case PEER_MSG_CANCEL:
         /* Skip payload */
         if (msg_len > 1) {

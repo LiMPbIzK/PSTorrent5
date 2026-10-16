@@ -73,27 +73,32 @@ int peer_send_interested(int sock);
 int peer_send_request(int sock, uint32_t index, uint32_t begin, uint32_t length);
 
 /**
+ * A message received from a peer.
+ */
+typedef struct {
+    uint8_t        msg_id;         // PEER_MSG_* recibido
+    uint32_t       piece_index;    // Para HAVE y PIECE
+    uint32_t       piece_begin;    // Para PIECE
+    uint32_t       data_len;       // Bytes de datos en data
+    unsigned char *bitfield;       // Buffer donde copiar un BITFIELD (opcional)
+    size_t         bitfield_size;  // Tamano de ese buffer
+    int            bitfield_len;   // Bytes realmente copiados
+} peer_msg_t;
+
+/**
  * Read and process incoming messages from a peer.
  * @param sock          Connected socket
- * @param piece_index   Output: piece index
- * @param piece_begin   Output: offset within piece
+ * @param msg           Output: mensaje recibido y sus datos
  * @param data          Output buffer for piece data
  * @param data_size     Size of the output buffer (blocks larger than this are
  *                      truncated, never overflowed)
- * @param data_len      Output: length of received data
- * @param out_msg_id    Output: message id received (choke/unchoke/have...).
- *                      Necesario para saber si el peer nos ha desbloqueado,
- *                      que es lo que permite pedir bloques.
  * @param timeout_sec   Receive timeout
  * @return 0 for piece data, 1 for keepalive/choke/unchoke/have, -1 for error/disconnect
  */
 int peer_recv_message(int sock,
-                      uint32_t *piece_index,
-                      uint32_t *piece_begin,
+                      peer_msg_t *msg,
                       unsigned char *data,
                       size_t data_size,
-                      uint32_t *data_len,
-                      uint8_t *out_msg_id,
                       int timeout_sec);
 
 #endif /* PS5TORRENT_PEER_WIRE_H */

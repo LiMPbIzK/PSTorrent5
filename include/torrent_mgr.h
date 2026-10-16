@@ -94,6 +94,13 @@ typedef struct {
     uint64_t  downloaded;
     uint64_t  uploaded;
     unsigned  messages_seen;   // Para limitar las trazas de have/bitfield
+
+    /* Piezas que tiene el peer. Sin esto se le pediria una que no tiene y los
+     * clientes desconectan al peer que lo hace (era la causa de que el peer se
+     * cayese justo despues del unchoke). */
+    unsigned char *bitfield;
+    size_t         bitfield_len;
+    int            has_bitfield;
 } torrent_peer_t;
 
 /**
