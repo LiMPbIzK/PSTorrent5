@@ -266,8 +266,13 @@ void torrent_mgr_status_json(char *buf, size_t bufsz);
 const char *torrent_mgr_error_str(torrent_error_t err);
 
 /**
+ * Log a line per torrent with progress, speed and peers. Useful during normal
+ * use: it is the quickest way to see whether a download is actually moving.
+ */
+void torrent_mgr_log_progress(void);
+
+/**
  * Shutdown all torrents and free resources.
  */
 void torrent_mgr_shutdown(void);
-
 #endif /* PS5TORRENT_TORRENT_MGR_H */

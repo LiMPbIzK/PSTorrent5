@@ -542,7 +542,6 @@ int main(void)
     /* Console HTTP/SSL stack: needed for https:// trackers (and later for the
      * self-updater). Non-fatal: without it only plain HTTP works. */
     net_http_init("PSTorrent5/" PSTORRENT5_VERSION);
-    net_http_selftest();
 
     /* fPKGs start sandboxed. etaHEN can grant filesystem access through its
      * local command service; payloads sent to an ELF loader may already have
@@ -653,17 +652,15 @@ int main(void)
         }
 
         /* Tick torrent manager */
-        int active = torrent_mgr_tick();
+        torrent_mgr_tick();
 
         /* Print status every 5 seconds. Se imprime tambien cuando hay torrents
          * parados o en error: sirve de latido para saber que el bucle sigue
          * vivo aunque no haya trafico. */
         if (now - last_status > 5000) {
             last_status = now;
-            if (active > 0 || torrent_mgr_count() > 0) {
-                ui_log("heartbeat: active=%d total=%d/%d",
-                       active, torrent_mgr_count(), torrent_mgr_capacity());
-            }
+            if (torrent_mgr_count() > 0)
+                torrent_mgr_log_progress();
         }
 
         /* Small delay to prevent busy-waiting */

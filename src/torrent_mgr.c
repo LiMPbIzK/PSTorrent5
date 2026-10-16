@@ -517,8 +517,6 @@ static int announce_to_tracker(managed_torrent_t *mt)
         /* Bounded work per round: the web panel shares this thread. */
         if (tried_trackers >= MAX_TRACKERS_PER_ANNOUNCE ||
             get_time_sec() >= deadline) {
-            ui_log("announce: round budget reached after %d tracker(s)",
-                   tried_trackers);
             break;
         }
         tried_trackers++;
@@ -573,10 +571,8 @@ static int announce_to_tracker(managed_torrent_t *mt)
                 continue;
             if (connects_this_round >= MAX_PEER_CONNECTS_PER_ANNOUNCE)
                 break;
-            if (get_time_sec() >= deadline) {
-                ui_log("announce: round budget reached while connecting peers");
+            if (get_time_sec() >= deadline)
                 break;
-            }
             connects_this_round++;
 
             /* Connect to peer */
@@ -1094,6 +1090,35 @@ void torrent_mgr_status_json(char *buf, size_t bufsz)
     }
 
     json_writef(&writer, "]}");
+}
+
+/**
+ * Log de progreso, una linea por torrent. Es la traza que de verdad importa
+ * durante el uso normal: cuanto llevamos, a que velocidad y con cuantos peers.
+ */
+void torrent_mgr_log_progress(void)
+{
+    char torrent_id[64];
+    for (int i = 0; i < num_torrents; i++) {
+        managed_torrent_t *mt = &torrents[i];
+        const char *state = "?";
+        switch (mt->state) {
+        case TORRENT_STOPPED:     state = "stopped"; break;
+        case TORRENT_DOWNLOADING: state = "downloading"; break;
+        case TORRENT_SEEDING:     state = "seeding"; break;
+        case TORRENT_ERROR:       state = "error"; break;
+        case TORRENT_DONE:        state = "done"; break;
+        }
+        snprintf(torrent_id, sizeof(torrent_id), "%s",
+                 mt->name[0] ? mt->name : "(sin nombre)");
+        ui_log("progress: #%d '%s' %s %.2f%% (%.1f/%.1f MB) %.0f KB/s peers=%d",
+               i, torrent_id, state,
+               (double)mt->progress * 100.0,
+               (double)mt->downloaded / (1024.0 * 1024.0),
+               (double)mt->total_size / (1024.0 * 1024.0),
+               (double)mt->speed_down / 1024.0,
+               mt->active_peers);
+    }
 }
 
 void torrent_mgr_shutdown(void)

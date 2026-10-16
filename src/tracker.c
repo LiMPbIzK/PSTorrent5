@@ -217,10 +217,13 @@ tracker_response_t *tracker_announce(const char *tracker_url,
 
         got = net_http_get(url_with_query, resp_buf, sizeof(resp_buf),
                            &status_code);
+        if (got < 0) {
+            ui_log("announce: HTTPS GET %s failed", host);
+            return NULL;
+        }
+
         ui_log("announce: HTTPS GET %s -> %d bytes, status %d",
                host, got, status_code);
-        if (got < 0) return NULL;
-
         resp_pos = (size_t)got;
         body = resp_buf;
         body_len = resp_pos;
@@ -228,15 +231,10 @@ tracker_response_t *tracker_announce(const char *tracker_url,
         /* Resolve host and connect */
         uint32_t addr;
 
-        ui_log("announce: probing %s:%u%s", host, (unsigned)port, path_start);
-
         if (net_resolve(host, &addr) < 0) {
             ui_log("announce: could not resolve '%s'", host);
             return NULL;
         }
-
-        ui_log("announce: resolved, connecting (timeout %ds)",
-               NET_TRACKER_CONNECT_TIMEOUT_SEC);
 
         int sock = net_tcp_connect_timeout(addr, (uint16_t)port,
                                            NET_TRACKER_CONNECT_TIMEOUT_SEC);
@@ -247,7 +245,6 @@ tracker_response_t *tracker_announce(const char *tracker_url,
 
         /* Set timeout */
         net_set_timeout(sock, NET_TRACKER_IO_TIMEOUT_SEC);
-        ui_log("announce: connected, sending request (%d bytes)", req_len);
 
         /* Send HTTP request */
         if (net_send_all(sock, request, (size_t)req_len) < 0) {
@@ -265,8 +262,6 @@ tracker_response_t *tracker_announce(const char *tracker_url,
         }
 
         net_close(sock);
-
-        ui_log("announce: response %zu bytes", resp_pos);
 
         if (resp_pos == 0) return NULL;
 
