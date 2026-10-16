@@ -18,9 +18,9 @@
  * deliberately short; an unreachable peer must never stall the main loop.
  */
 #define NET_TRACKER_CONNECT_TIMEOUT_SEC 5
-#define NET_PEER_CONNECT_TIMEOUT_SEC    1
-#define NET_TRACKER_IO_TIMEOUT_SEC      10
-#define NET_PEER_IO_TIMEOUT_SEC         15
+#define NET_PEER_CONNECT_TIMEOUT_SEC    5
+#define NET_TRACKER_IO_TIMEOUT_SEC      8
+#define NET_PEER_IO_TIMEOUT_SEC         8
 
 /**
  * Initialize networking subsystem.

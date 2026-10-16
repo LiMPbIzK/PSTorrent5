@@ -20,12 +20,42 @@
 #define MAX_PEERS_PER_TORRENT 50
 
 /**
+ * Maximum trackers whose health is remembered per torrent.
+ */
+#define MAX_TRACKER_STATE 32
+
+/**
+ * Maximum trackers tried per announce round.
+ *
+ * Each tracker that does not answer costs NET_TRACKER_CONNECT_TIMEOUT_SEC and
+ * the web panel shares this thread, so the work per round is bounded. Many
+ * torrents carry 20+ announce URLs; without this bound the loop would block for
+ * minutes and the panel would look dead.
+ */
+#define MAX_TRACKERS_PER_ANNOUNCE 2
+
+/**
+ * Wall-clock budget for one announce round, in seconds.
+ *
+ * This is the real guarantee that the panel stays usable: the round stops as
+ * soon as it is exceeded (it can overshoot by at most one socket timeout).
+ */
+#define ANNOUNCE_BUDGET_SEC 8
+
+/**
+ * Backoff applied to a tracker that did not answer: fails * this value,
+ * capped at MAX_TRACKER_BACKOFF_SEC.
+ */
+#define TRACKER_BACKOFF_STEP_SEC 120
+#define MAX_TRACKER_BACKOFF_SEC 600
+
+/**
  * Maximum new peer connections attempted per tracker announce.
  *
  * Each attempt can block for NET_PEER_CONNECT_TIMEOUT_SEC and the web panel
  * shares the engine's thread, so the work per announce is bounded.
  */
-#define MAX_PEER_CONNECTS_PER_ANNOUNCE 4
+#define MAX_PEER_CONNECTS_PER_ANNOUNCE 2
 
 /**
  * Torrent state.
@@ -109,6 +139,14 @@ typedef struct {
     int       is_magnet;      // 1 = from magnet link
     char      magnet_uri[1024]; // Original magnet URI
     char      torrent_source[4096]; // Original .torrent data (for magnet)
+
+    /* Per-tracker health. A torrent can list 20+ announce URLs and, if all of
+     * them time out, retrying every round would keep the main loop (and the web
+     * panel) blocked for minutes. Dead trackers get an increasing backoff. */
+    struct {
+        uint64_t next_try_sec;  // 0 = may be tried now
+        int      fails;
+    } tracker_state[MAX_TRACKER_STATE];
 } managed_torrent_t;
 
 /**

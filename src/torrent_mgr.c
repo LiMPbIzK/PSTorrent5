@@ -425,6 +425,11 @@ static int announce_to_tracker(managed_torrent_t *mt)
     int connects_this_round = 0;
     int connects_ok = 0;
     int connects_failed = 0;
+    int tried_trackers = 0;
+    int skipped_trackers = 0;
+    uint64_t now = get_time_sec();
+    uint64_t deadline = now + ANNOUNCE_BUDGET_SEC;
+
     mt->tracker_announces++;
     mt->tracker_interval = 30;
 
@@ -441,7 +446,41 @@ static int announce_to_tracker(managed_torrent_t *mt)
         if (mt->torrent->announce && url != mt->torrent->announce &&
             strcmp(url, mt->torrent->announce) == 0) continue;
 
+        /* A tracker that failed recently is skipped until its backoff expires.
+         * Skipping is free, so a list full of dead trackers costs nothing. */
+        if (url_index < MAX_TRACKER_STATE &&
+            mt->tracker_state[url_index].next_try_sec > now) {
+            skipped_trackers++;
+            continue;
+        }
+
+        /* Bounded work per round: the web panel shares this thread. */
+        if (tried_trackers >= MAX_TRACKERS_PER_ANNOUNCE ||
+            get_time_sec() >= deadline) {
+            ui_log("announce: round budget reached after %d tracker(s)",
+                   tried_trackers);
+            break;
+        }
+        tried_trackers++;
+
         tracker_response_t *tr = tracker_announce(url, &params);
+
+        if (url_index < MAX_TRACKER_STATE) {
+            if (tr) {
+                mt->tracker_state[url_index].fails = 0;
+                mt->tracker_state[url_index].next_try_sec = 0;
+            } else {
+                int fails = ++mt->tracker_state[url_index].fails;
+                uint64_t backoff = (uint64_t)fails * TRACKER_BACKOFF_STEP_SEC;
+                if (backoff > MAX_TRACKER_BACKOFF_SEC)
+                    backoff = MAX_TRACKER_BACKOFF_SEC;
+                mt->tracker_state[url_index].next_try_sec = now + backoff;
+                ui_log("announce: tracker %zu did not answer (%d time(s)); "
+                       "backoff %llus", url_index, fails,
+                       (unsigned long long)backoff);
+            }
+        }
+
         if (!tr) continue;
         contacted++;
         if (tr->failure_reason) {
@@ -474,6 +513,10 @@ static int announce_to_tracker(managed_torrent_t *mt)
                 continue;
             if (connects_this_round >= MAX_PEER_CONNECTS_PER_ANNOUNCE)
                 break;
+            if (get_time_sec() >= deadline) {
+                ui_log("announce: round budget reached while connecting peers");
+                break;
+            }
             connects_this_round++;
 
             /* Connect to peer */
@@ -520,8 +563,9 @@ static int announce_to_tracker(managed_torrent_t *mt)
         mt->error_msg[0] = '\0';
         mt->error_code[0] = '\0';
         ui_log("announce ok: %d tracker(s), %d peer(s) offered, %d connected "
-               "(%d failed, active=%d)", contacted, peers_reported, connects_ok,
-               connects_failed, mt->active_peers);
+               "(%d failed, active=%d, %d tracker(s) in backoff)", contacted,
+               peers_reported, connects_ok, connects_failed, mt->active_peers,
+               skipped_trackers);
         return 0;
     }
 
@@ -673,7 +717,7 @@ int torrent_mgr_tick(void)
 
         /* If no active peers, try to re-announce. Kept short so that the
          * bounded peer-connect budget accumulates peers quickly. */
-        if (mt->active_peers == 0 && now - mt->last_announce_time >= 5) {
+        if (mt->active_peers == 0 && now - mt->last_announce_time >= 30) {
             announce_to_tracker(mt);
             mt->last_announce_time = now;
         }
