@@ -584,6 +584,14 @@ static int announce_to_tracker(managed_torrent_t *mt)
                                                ntohs(tr->peers[i].port),
                                                NET_PEER_CONNECT_TIMEOUT_SEC);
             if (sock < 0) {
+                /* Se registra la direccion: sirve para distinguir peers de
+                 * IPv6 (inalcanzables desde aqui) de peers caidos. */
+                ui_log("peer connect failed: %u.%u.%u.%u:%u",
+                       (ntohl(tr->peers[i].ip) >> 24) & 0xff,
+                       (ntohl(tr->peers[i].ip) >> 16) & 0xff,
+                       (ntohl(tr->peers[i].ip) >> 8) & 0xff,
+                       ntohl(tr->peers[i].ip) & 0xff,
+                       ntohs(tr->peers[i].port));
                 connects_failed++;
                 continue;
             }
@@ -723,7 +731,17 @@ static void process_peer(managed_torrent_t *mt, int peer_idx)
         if (p->bitfield && msg.piece_index < mt->torrent->num_pieces)
             p->bitfield[msg.piece_index / 8] |=
                 (unsigned char)(1u << (7 - (msg.piece_index % 8)));
-        if (p->messages_seen < 3) {
+
+        /* Un HAVE demuestra que ya sabemos algo de lo que tiene: sin marcarlo
+         * aqui, un peer que no manda bitfield (un leecher) se quedaria fuera
+         * de la seleccion para siempre. */
+        if (!p->has_bitfield) {
+            p->has_bitfield = 1;
+            ui_log("peer %d has no bitfield; using its HAVE messages instead",
+                   peer_idx);
+        }
+
+        if (p->messages_seen < 5) {
             p->messages_seen++;
             ui_log("peer %d have piece %u", peer_idx, msg.piece_index);
         }
