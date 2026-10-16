@@ -121,6 +121,7 @@ typedef struct {
     /* BEP-10/11: numero con el que el peer quiere que le hablemos de ut_pex
      * (0 = no lo soporta) y cuando le mandamos la ultima lista. */
     uint8_t        ext_id_ut_pex;
+    uint8_t        supports_ext;
     uint64_t       last_pex_sent;
 } torrent_peer_t;
 

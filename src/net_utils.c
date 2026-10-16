@@ -146,7 +146,12 @@ int net_recv_exact(int sock, void *buf, size_t len)
             if (errno == EINTR) continue;
             return -1;
         }
-        if (n == 0) return -1; // Connection closed
+        if (n == 0) {
+            /* Cierre limpio del peer. Se deja errno a 0 para que quien registre
+             * el error pueda distinguirlo de un reset (104) o de un timeout. */
+            errno = 0;
+            return -1;
+        }
         ptr += n;
         remaining -= (size_t)n;
     }

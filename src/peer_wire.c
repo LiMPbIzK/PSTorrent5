@@ -23,7 +23,8 @@ void peer_handshake_init(peer_handshake_t *hs,
 int peer_handshake(int sock,
                    const unsigned char info_hash[20],
                    const unsigned char peer_id[20],
-                   unsigned char peer_id_out[20])
+                   unsigned char peer_id_out[20],
+                   uint8_t reserved_out[8])
 {
     peer_handshake_t hs_out;
     peer_handshake_init(&hs_out, info_hash, peer_id);
@@ -45,6 +46,12 @@ int peer_handshake(int sock,
     /* Output peer ID if requested */
     if (peer_id_out)
         memcpy(peer_id_out, hs_in.peer_id, 20);
+
+    /* Reservados del peer: dicen que extensiones soporta (BEP-10 -> byte 5
+     * bit 0x10). No se pueden ignorar: hablarle de extensiones a quien no las
+     * ha anunciado es una violacion de protocolo y el peer cierra. */
+    if (reserved_out)
+        memcpy(reserved_out, hs_in.reserved, 8);
 
     return 0;
 }

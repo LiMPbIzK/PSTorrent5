@@ -65,12 +65,17 @@ void peer_handshake_init(peer_handshake_t *hs,
  * @param info_hash 20-byte info hash
  * @param peer_id   20-byte local peer ID
  * @param peer_id_out Output buffer for remote peer's ID (20 bytes), or NULL
+ * @param reserved_out Output: los 8 bytes de reservados del peer (o NULL).
+ *                     Hace falta para saber si soporta el protocolo de extension
+ *                     (BEP-10): mandarle un mensaje de extension a quien no lo
+ *                     ha anunciado es una violacion y el peer cierra.
  * @return 0 on success, -1 on error
  */
 int peer_handshake(int sock,
                    const unsigned char info_hash[20],
                    const unsigned char peer_id[20],
-                   unsigned char peer_id_out[20]);
+                   unsigned char peer_id_out[20],
+                   uint8_t reserved_out[8]);
 
 /**
  * Send an "interested" message.

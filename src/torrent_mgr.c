@@ -3,6 +3,7 @@
 #include "sha1.h"
 #include "http_server.h"
 #include "bencode.h"
+#include "version.h"
 #include "ui.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -337,6 +338,11 @@ int torrent_mgr_start(int index)
     mt->error_msg[0] = '\0';
     mt->error_code[0] = '\0';
 
+    /* Marca de build: con esto se sabe que ELF esta corriendo de verdad sin
+     * tener que adivinarlo (el log del payload se corta y se reanuda). */
+    ui_log("engine: PSTorrent5 %s (build " __DATE__ " " __TIME__ ")",
+           PSTORRENT5_VERSION);
+
     ui_log("start #%d '%s': %zu pieces x %lld B, %zu files, dest=%s",
            index, mt->name, mt->torrent->num_pieces,
            (long long)mt->torrent->piece_length, mt->torrent->num_files,
@@ -578,8 +584,9 @@ static int connect_one(managed_torrent_t *mt, const peer_addr_t *addr)
     net_set_timeout(sock, NET_PEER_IO_TIMEOUT_SEC);
 
     uint8_t remote_id[20];
+    uint8_t peer_reserved[8];
     if (peer_handshake(sock, mt->torrent->info_hash,
-                       mt->peer_id, remote_id) < 0) {
+                       mt->peer_id, remote_id, peer_reserved) < 0) {
         net_close(sock);
         return 0;
     }
@@ -599,6 +606,7 @@ static int connect_one(managed_torrent_t *mt, const peer_addr_t *addr)
     p->uploaded = 0;
     p->ext_id_ut_pex = 0;
     p->last_pex_sent = 0;
+    p->supports_ext = (peer_reserved[5] & 0x10) != 0;
 
     /* Bitfield del peer: se reserva ya para poder copiarlo en cuanto llegue
      * (es lo que permite pedirle solo lo que tiene). */
@@ -613,9 +621,16 @@ static int connect_one(managed_torrent_t *mt, const peer_addr_t *addr)
     mt->active_peers++;
 
     peer_send_interested(sock);
-    /* BEP-10: sin el handshake extendido el peer no nos manda ut_pex, que es
-     * de donde van a salir los peers de verdad. */
-    peer_send_extended_handshake(sock);
+    /* BEP-10: el handshake extendido se manda SOLO a quien lo ha anunciado en
+     * los reservados. A un peer sin el bit extendido, un mensaje de extension
+     * (id 20) le parece una violacion del protocolo y cierra la conexion: era
+     * el motivo de que los peers desaparecieran al instante. */
+    if (p->supports_ext) {
+        peer_send_extended_handshake(sock);
+    } else {
+        ui_log("peer %d does not support the extension protocol (no PEX)",
+               peer_slot);
+    }
 
     return 1;
 }
@@ -890,8 +905,8 @@ static void process_peer(managed_torrent_t *mt, int peer_idx)
     ret = peer_recv_message(p->sock, &msg, block_buf, sizeof(block_buf), 0);
 
     if (ret < 0) {
-        ui_log("peer %d disconnected (last msg id %u)",
-               peer_idx, (unsigned)msg.msg_id);
+        ui_log("peer %d disconnected (last msg id %u, errno %d '%s')",
+               peer_idx, (unsigned)msg.msg_id, errno, strerror(errno));
         peer_close(mt, peer_idx);
         return;
     }
