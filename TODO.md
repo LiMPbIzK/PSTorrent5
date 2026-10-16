@@ -96,6 +96,9 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 
 ## Hito 5: Panel web y API
 
+- [x] **Internacionalización del panel web** (`src/web/index.html`): tabla `I18N` con **es/en/pt**, detección automática (`?lang=` → localStorage → navegador), selector en la cabecera y `tools/check-i18n.js` verificado en CI
+- [x] **Códigos de error estables** (`error_code`) en la API y en el estado de cada torrent; los mensajes del servidor pasan a inglés (klog y reserva) y el panel los traduce
+- [x] Otras dos bombas de pila eliminadas en el motor: `uint8_t piece_buf[256 KB]` en `process_peer()` (ahora `static`) y `char data_b64[1 MB]` en la subida de `.torrent`
 - [ ] Autenticación (token o Basic) con aviso en el panel
 - [ ] Gestión completa: pause / resume / delete / prioridad / reintentar
 - [ ] Selección de ficheros del `.torrent`

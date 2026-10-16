@@ -249,18 +249,20 @@ int torrent_mgr_start(int index)
     }
     mt->error_type = TERR_NONE;
     mt->error_msg[0] = '\0';
+    mt->error_code[0] = '\0';
 
     /* Create save directory */
     if (ensure_directory_tree(mt->save_path) < 0) {
         int saved_errno = errno;
         mt->state = TORRENT_ERROR;
         mt->error_type = TERR_WRITE_FAILED;
+        strncpy(mt->error_code, "write_failed", sizeof(mt->error_code) - 1);
         if (saved_errno == EACCES || saved_errno == EPERM) {
             snprintf(mt->error_msg, sizeof(mt->error_msg),
-                     "Sem permissão para criar %s", mt->save_path);
+                     "No permission to create %s", mt->save_path);
         } else {
             snprintf(mt->error_msg, sizeof(mt->error_msg),
-                     "Não foi possível criar %s: %s",
+                     "Could not create %s: %s",
                      mt->save_path, strerror(saved_errno));
         }
         return -1;
@@ -272,6 +274,7 @@ int torrent_mgr_start(int index)
          * requires BEP-9 (extension protocol) */
         mt->state = TORRENT_ERROR;
         mt->error_type = TERR_PARSE_FAILED;
+        strncpy(mt->error_code, "magnet_no_metadata", sizeof(mt->error_code) - 1);
         snprintf(mt->error_msg, sizeof(mt->error_msg),
                  "Magnet links require metadata download (BEP-9) - "
                  "use a .torrent file instead");
@@ -290,8 +293,9 @@ int torrent_mgr_start(int index)
         int saved_errno = errno;
         mt->state = TORRENT_ERROR;
         mt->error_type = TERR_WRITE_FAILED;
+        strncpy(mt->error_code, "write_failed", sizeof(mt->error_code) - 1);
         snprintf(mt->error_msg, sizeof(mt->error_msg),
-                 "Não foi possível criar o arquivo em %s: %s",
+                 "Could not create the file in %s: %s",
                  mt->save_path, strerror(saved_errno));
         return -1;
     }
@@ -498,18 +502,22 @@ static int announce_to_tracker(managed_torrent_t *mt)
     if (mt->active_peers > 0) {
         mt->error_type = TERR_NONE;
         mt->error_msg[0] = '\0';
+        mt->error_code[0] = '\0';
         return 0;
     }
 
     if (contacted == 0) {
+        strncpy(mt->error_code, "no_tracker", sizeof(mt->error_code) - 1);
         snprintf(mt->error_msg, sizeof(mt->error_msg),
-                 "Nenhum tracker HTTP compatível respondeu; HTTPS/UDP ainda não são suportados");
+                 "No compatible HTTP tracker answered; HTTPS/UDP are not supported yet");
     } else if (peers_reported == 0) {
+        strncpy(mt->error_code, "no_peers", sizeof(mt->error_code) - 1);
         snprintf(mt->error_msg, sizeof(mt->error_msg),
-                 "Trackers responderam, mas não há peers disponíveis; nova tentativa automática");
+                 "Trackers answered, but no peers are available; will retry automatically");
     } else {
+        strncpy(mt->error_code, "peers_failed", sizeof(mt->error_code) - 1);
         snprintf(mt->error_msg, sizeof(mt->error_msg),
-                 "Peers encontrados, mas as conexões falharam; nova tentativa automática");
+                 "Peers were found, but the connections failed; will retry automatically");
     }
     mt->error_type = TERR_NO_PEERS;
     return -1;
@@ -523,7 +531,10 @@ static void process_peer(managed_torrent_t *mt, int peer_idx)
     torrent_peer_t *p = &mt->peers[peer_idx];
     if (p->sock < 0) return;
 
-    uint8_t piece_buf[256 * 1024];
+    /* Static, not automatic: this runs from the main loop and a 256 KB frame
+     * would put the payload's thread stack at risk. The loop is single
+     * threaded, so a single buffer is enough. */
+    static uint8_t piece_buf[256 * 1024];
     uint32_t piece_idx = 0, piece_begin = 0, block_len = 0;
 
     int ret = peer_recv_message(p->sock, &piece_idx, &piece_begin,
@@ -773,6 +784,8 @@ void torrent_mgr_status_json(char *buf, size_t bufsz)
         json_write_string(&writer, mt->save_path);
         json_writef(&writer, ",\"error\":");
         json_write_string(&writer, mt->error_msg[0] ? mt->error_msg : "");
+        json_writef(&writer, ",\"error_code\":");
+        json_write_string(&writer, mt->error_code[0] ? mt->error_code : "");
         json_writef(&writer, "}");
     }
 

@@ -77,6 +77,7 @@ typedef struct {
     torrent_state_t  state;
     torrent_error_t  error_type;
     char             error_msg[256];
+    char             error_code[32];  // Stable code for UI translations (see web i18n)
 
     torrent_t       *torrent;
     piece_mgr_t      piece_mgr;

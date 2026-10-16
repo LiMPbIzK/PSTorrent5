@@ -31,6 +31,9 @@ jobs:
           echo "${SDK_SHA256}  /tmp/ps5-payload-sdk.zip" | sha256sum --check
           unzip -q /tmp/ps5-payload-sdk.zip -d /tmp
 
+      - name: Check web panel translations
+        run: node tools/check-i18n.js
+
       - name: Build
         run: make --jobs=2
 

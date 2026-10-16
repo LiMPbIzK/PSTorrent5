@@ -102,32 +102,50 @@ static int build_save_path(const char *base_path,
     return n >= 0 && (size_t)n < save_path_size ? 0 : -1;
 }
 
+/**
+ * Build a JSON error response: the human-readable message plus a stable code
+ * the web panel translates (see the i18n table in src/web/index.html).
+ */
+static http_response_t *json_error(int status, const char *code,
+                                   const char *message)
+{
+    char body[512];
+    char escaped[384];
+    int n;
+
+    json_escape_text(message ? message : "", escaped, sizeof(escaped));
+    n = snprintf(body, sizeof(body),
+                 "{\"success\":false,\"error\":\"%s\",\"error_code\":\"%s\"}",
+                 escaped, code ? code : "");
+    if (n < 0) n = 0;
+
+    return http_response_new(status, "application/json", body, (size_t)n);
+}
+
 static http_response_t *torrent_start_error_response(int index,
                                                      int remove_torrent)
 {
     managed_torrent_t *mt = torrent_mgr_get(index);
     const char *message = mt && mt->error_msg[0]
-                        ? mt->error_msg : "Não foi possível iniciar o torrent";
+                        ? mt->error_msg : "The torrent could not be started";
+    const char *code = mt && mt->error_code[0] ? mt->error_code : "start_failed";
     int status = mt && mt->error_type == TERR_WRITE_FAILED ? 403 : 400;
-    char detailed[512];
-    char escaped[512];
-    char json[640];
+    http_response_t *response;
 
     if (status == 403 && !etahen_jailbreak_active) {
+        char detailed[512];
         snprintf(detailed, sizeof(detailed),
-                 "%s. No etaHEN, ative Network e Legacy CMD server e reabra o app",
-                 message);
-        message = detailed;
+                 "%s. On etaHEN, enable Network and Legacy CMD server and "
+                 "reopen the app", message);
+        response = json_error(status, code, detailed);
+    } else {
+        response = json_error(status, code, message);
     }
-
-    json_escape_text(message, escaped, sizeof(escaped));
-    int n = snprintf(json, sizeof(json),
-                     "{\"success\":false,\"error\":\"%s\"}", escaped);
 
     if (remove_torrent)
         torrent_mgr_remove(index);
 
-    return http_response_new(status, "application/json", json, (size_t)n);
+    return response;
 }
 
 /**
@@ -159,8 +177,7 @@ static http_response_t *handle_api_torrents(const http_request_t *req)
 static http_response_t *handle_api_add(const http_request_t *req)
 {
     if (req->method != HTTP_POST || !req->body) {
-        return http_response_new(400, "application/json",
-                                 "{\"success\":false,\"error\":\"POST required\"}", 43);
+        return json_error(400, "post_required", "POST required");
     }
 
     char magnet[2048] = {0};
@@ -170,26 +187,20 @@ static http_response_t *handle_api_add(const http_request_t *req)
     http_get_param(req->body, "path", path, sizeof(path));
 
     if (!magnet[0]) {
-        return http_response_new(400, "application/json",
-                                 "{\"success\":false,\"error\":\"Magnet link required\"}", 50);
+        return json_error(400, "magnet_required", "Magnet link required");
     }
 
     if (!path[0])
         strncpy(path, storage_paths_get_default(), sizeof(path) - 1);
 
     char save_path[512];
-    if (build_save_path(path, save_path, sizeof(save_path)) < 0) {
-        static const char body[] =
-            "{\"success\":false,\"error\":\"Caminho inválido\"}";
-        return http_response_new(400, "application/json",
-                                 body, sizeof(body) - 1);
-    }
+    if (build_save_path(path, save_path, sizeof(save_path)) < 0)
+        return json_error(400, "path_invalid", "Invalid path");
 
     int idx = torrent_mgr_add_magnet(magnet, save_path);
     if (idx < 0) {
-        return http_response_new(400, "application/json",
-            "{\"success\":false,\"error\":\"Invalid magnet link or "
-            "too many torrents\"}", 60);
+        return json_error(400, "magnet_invalid",
+                          "Invalid magnet link or too many torrents");
     }
 
     /* Start download automatically */
@@ -214,8 +225,7 @@ static http_response_t *handle_api_add(const http_request_t *req)
 static http_response_t *handle_api_upload(const http_request_t *req)
 {
     if (req->method != HTTP_POST || !req->body || req->body_len == 0) {
-        return http_response_new(400, "application/json",
-                                 "{\"success\":false,\"error\":\"File required\"}", 44);
+        return json_error(400, "file_required", "File required");
     }
 
     const char *file_data = NULL;
@@ -226,19 +236,19 @@ static http_response_t *handle_api_upload(const http_request_t *req)
     /* Try multipart form data */
     if (!http_get_upload(req->body, req->body_len, "torrent",
                          &file_data, &file_len, filename, sizeof(filename))) {
-        /* Try URL-encoded form */
-        char data_b64[HTTP_MAX_BODY] = {0};
-        http_get_param(req->body, "torrent_data", data_b64, sizeof(data_b64));
+        /* URL-encoded form: the simple base64 path is not implemented, so the
+         * field is only checked for presence. No large stack buffer here: this
+         * handler shares the payload's thread stack with the whole engine. */
+        char torrent_data[64] = {0};
+        http_get_param(req->body, "torrent_data", torrent_data,
+                       sizeof(torrent_data));
         http_get_param(req->body, "path", path, sizeof(path));
 
-        if (!data_b64[0]) {
-            return http_response_new(400, "application/json",
-                "{\"success\":false,\"error\":\"No torrent file found\"}", 51);
-        }
+        if (!torrent_data[0])
+            return json_error(400, "no_file", "No torrent file found");
 
-        /* Base64 decode not implemented in this simple version */
-        return http_response_new(400, "application/json",
-            "{\"success\":false,\"error\":\"Use multipart upload instead\"}", 56);
+        return json_error(400, "multipart_required",
+                          "Use multipart upload instead");
     }
 
     http_get_multipart_field(req->body, req->body_len, "path",
@@ -247,24 +257,16 @@ static http_response_t *handle_api_upload(const http_request_t *req)
     if (!path[0])
         strncpy(path, storage_paths_get_default(), sizeof(path) - 1);
 
-    if (!file_data || file_len == 0) {
-        return http_response_new(400, "application/json",
-            "{\"success\":false,\"error\":\"Empty file\"}", 41);
-    }
+    if (!file_data || file_len == 0)
+        return json_error(400, "empty_file", "Empty file");
 
     char save_path[512];
-    if (build_save_path(path, save_path, sizeof(save_path)) < 0) {
-        static const char body[] =
-            "{\"success\":false,\"error\":\"Caminho inválido\"}";
-        return http_response_new(400, "application/json",
-                                 body, sizeof(body) - 1);
-    }
+    if (build_save_path(path, save_path, sizeof(save_path)) < 0)
+        return json_error(400, "path_invalid", "Invalid path");
 
     int idx = torrent_mgr_add_raw((const unsigned char *)file_data, file_len, save_path);
-    if (idx < 0) {
-        return http_response_new(400, "application/json",
-            "{\"success\":false,\"error\":\"Invalid torrent file\"}", 50);
-    }
+    if (idx < 0)
+        return json_error(400, "invalid_torrent", "Invalid torrent file");
 
     /* Start download automatically */
     if (torrent_mgr_start(idx) < 0)
@@ -288,8 +290,7 @@ static http_response_t *handle_api_upload(const http_request_t *req)
 static http_response_t *handle_api_action(const http_request_t *req)
 {
     if (req->method != HTTP_POST) {
-        return http_response_new(400, "application/json",
-                                 "{\"success\":false,\"error\":\"POST required\"}", 43);
+        return json_error(400, "post_required", "POST required");
     }
 
     /* Parse path: /api/torrents/<id>/<action> */
@@ -309,8 +310,7 @@ static http_response_t *handle_api_action(const http_request_t *req)
     }
 
     if (id < 0 || *p != '/') {
-        return http_response_new(400, "application/json",
-                                 "{\"success\":false,\"error\":\"Invalid path\"}", 43);
+        return json_error(400, "path_invalid", "Invalid path");
     }
 
     p++; // skip '/'
@@ -335,10 +335,7 @@ static http_response_t *handle_api_action(const http_request_t *req)
     } else {
         if (strcmp(action, "start") == 0 && id >= 0 && torrent_mgr_get(id))
             return torrent_start_error_response(id, 0);
-        static const char body[] =
-            "{\"success\":false,\"error\":\"Ação inválida\"}";
-        return http_response_new(400, "application/json",
-                                 body, sizeof(body) - 1);
+        return json_error(400, "action_invalid", "Invalid action");
     }
 }
 

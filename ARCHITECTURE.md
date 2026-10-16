@@ -70,7 +70,9 @@ pstorrent5/
 ├── pkg/                      # metadatos del fPKG (sce_sys/param.json, iconos, TILE.md)
 ├── tile/                     # (nuevo) folder app: eboot.bin, sce_module/libc.prx, sce_sys/, engine/
 ├── scripts/                  # setup, deps de extracción, embed del panel, diagnóstico
-├── tools/                    # empaquetadores (LibProsperoPKG), utilidades de release
+├── tools/                    # empaquetadores (LibProsperoPKG) y utilidades de desarrollo
+│   ├── prospero-lld/         # shim de enlazado para Windows (clang exige 'prospero-lld')
+│   └── check-i18n.js         # verifica que las traducciones del panel estén completas
 ├── Makefile                  # build del ELF del motor
 ├── setup.sh                  # preparación reproducible del entorno
 ├── ARCHITECTURE.md           # este documento
@@ -88,6 +90,8 @@ pstorrent5/
 * **Modos de fichero:** todo fichero del folder app y de su ZIP debe quedar en **modo 0777** (si no, la consola no arranca la app).
 * **Primitivas de red:** los trackers HTTP usan el cliente propio; HTTPS usa la pila de la consola. El cliente HTTP debe ser tolerante a respuestas parciales y nunca bloquear más de un tick.
 * **Errores:** todo fallo visible en el panel con causa concreta (no mensajes genéricos), y toda operación destructiva precedida de verificación (espacio libre, hash, título).
+* **Idiomas (i18n):** todo texto visible vive en la tabla `I18N` de `src/web/index.html` (hoy **es/en/pt**), referenciada con atributos `data-i18n*` en el HTML y `T('clave')` en el JS. **No se dejan textos de interfaz embebidos en C/JS**: el servidor responde en inglés (para klog y como reserva) más un **`error_code` estable**, y el panel traduce el código. Añadir un idioma es una entrada en `I18N` y otra en `LANGS`; `tools/check-i18n.js` (y el paso de CI) verifican que ninguna clave falte en ningún idioma.
+* **Pila (stack):** prohibido reservar buffers grandes en pila (el hilo es compartido con el motor); los buffers de trabajo (>4 KB) son `static` o del montón. Referencia: `process_peer()` y el antiguo `data_b64[1 MB]` de la subida de `.torrent`.
 * **Estilo:** coincidir con el código existente: C estilo K&R, identificadores en `snake_case`, prefijos por módulo (`torrent_`, `tracker_`, `storage_`), cabeceras con guardas `PS5TORRENT_*_H` y comentarios de bloque `/** ... */` en las APIs públicas.
 * **Pruebas:** no hay framework nativo; cada módulo nuevo debe poder probarse en el host (compilación nativa de la parte pura: parser, cola, sanitizado de rutas) además de en consola.
 
