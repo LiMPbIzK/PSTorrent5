@@ -1,6 +1,6 @@
 # Build del payload en Windows (nativo)
 
-Compila `ps5_torrent.elf` en Windows **sin WSL, sin `sudo`, sin `make` y sin
+Compila `pstorrent5.elf` en Windows **sin WSL, sin `sudo`, sin `make` y sin
 dependencias del sistema**. Todo queda dentro del proyecto o en `J:`.
 
 ## Requisitos
@@ -33,7 +33,7 @@ Expand-Archive ps5-payload-sdk.zip -DestinationPath .deps -Force
 .\build.ps1 -Rebuild     # recompila todo sin borrar
 ```
 
-Salida: `ps5_torrent.elf` en la raíz del proyecto.
+Salida: `pstorrent5.elf` en la raíz del proyecto.
 
 El script **lee `SRCS`, `CFLAGS`, `INCLUDES` y `LDLIBS` del `Makefile`**, que
 sigue siendo la única fuente de verdad, así que no puede desincronizarse del
@@ -43,7 +43,7 @@ build de Linux/CI. También regenera `src/web_content.h` desde
 Enviar a la consola (loader en el puerto 9021):
 
 ```powershell
-curl.exe --data-binary "@ps5_torrent.elf" http://<IP_PS5>:9021/
+curl.exe --data-binary "@pstorrent5.elf" http://<IP_PS5>:9021/
 ```
 
 ## Cómo funciona (y por qué hay un shim)
@@ -69,7 +69,7 @@ en Linux, pero sobre clang de Windows:
 
 - **Las libs SCE del SDK son `.so`, no `.a`** (`libSceSystemService.so`,
   `libkernel_web.so`…). `-lSceSystemService` resuelve bien vía `-L target\lib`.
-- **El volumen de `J:` no trunca al sobrescribir.** Si el `ps5_torrent.elf`
+- **El volumen de `J:` no trunca al sobrescribir.** Si el `pstorrent5.elf`
   anterior era mayor, el nuevo queda con cola del binario viejo y un tamaño
   falso. El script borra el ELF antes de enlazar; si compilas a mano, hazlo tú.
 - **`J:` puede tardar en publicar un fichero recién creado**, así que

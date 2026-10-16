@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "version.h"
 #include <stdio.h>
 #include <stdarg.h>
 
@@ -31,18 +32,17 @@ void ui_init(void)
 {
     /* Try to initialize klog - if it fails, fall back to printf */
     /* klog_printf will work after __klog_init() in the CRT */
-    klog_printf("=== PS5Torrent Initializing ===\n");
+    klog_printf("=== PSTorrent5 Initializing ===\n");
     use_klog = 1;
 }
 
 void ui_print_banner(void)
 {
     ui_log("");
-    ui_log("  ╔══════════════════════════════════════════╗");
-    ui_log("  ║         PS5Torrent v1.0                  ║");
-    ui_log("  ║    BitTorrent Client for PlayStation 5    ║");
-    ui_log("  ║         Homebrew ELF Payload              ║");
-    ui_log("  ╚══════════════════════════════════════════╝");
+    ui_log("  ==================================================");
+    ui_log("   PSTorrent5 v" PSTORRENT5_VERSION);
+    ui_log("   BitTorrent client for PlayStation 5 (homebrew ELF)");
+    ui_log("  ==================================================");
     ui_log("");
     ui_log("  Built with ps5-payload-sdk");
     ui_log("");
@@ -121,7 +121,7 @@ void ui_log(const char *fmt, ...)
     va_start(args, fmt);
 
     if (use_klog) {
-        klog_printf("[PS5T] ");
+        klog_printf("[PST5] ");
         /* klog_printf supports format strings */
         /* We need to use a temporary buffer for the format */
         char buf[512];
@@ -145,7 +145,7 @@ void ui_error(const char *fmt, ...)
     va_end(args);
 
     if (use_klog) {
-        klog_printf("[PS5T] ERROR: %s\n", buf);
+        klog_printf("[PST5] ERROR: %s\n", buf);
     } else {
         fprintf(stderr, "ERROR: %s\n", buf);
     }
@@ -161,7 +161,7 @@ void ui_success(const char *fmt, ...)
     va_end(args);
 
     if (use_klog) {
-        klog_printf("[PS5T] SUCCESS: %s\n", buf);
+        klog_printf("[PST5] SUCCESS: %s\n", buf);
     } else {
         printf("SUCCESS: %s\n", buf);
     }

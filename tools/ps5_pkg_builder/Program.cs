@@ -3,7 +3,7 @@ using LibProsperoPkg.Util;
 
 if (args.Length != 2)
 {
-    Console.Error.WriteLine("Uso: PS5TorrentPkgBuilder PASTA_DO_APP PASTA_DE_SAIDA");
+    Console.Error.WriteLine("Uso: PSTorrent5PkgBuilder PASTA_DO_APP PASTA_DE_SAIDA");
     return 2;
 }
 
@@ -26,10 +26,10 @@ var options = new ProsperoHomebrewPackageOptions
     HomebrewFolder = source,
     OutputFolder = output,
     ModuleName = "eboot.bin",
-    ContentId = "IV9999-PPSA00001_00-PS5TORRENT000001",
+    ContentId = "IV9999-PPSA91289_00-PSTORRENT5000000",
     Passcode = new string('0', 32),
-    Title = "PS5Torrent",
-    Version = "01.00",
+    Title = "PSTorrent5",
+    Version = "01.01",
 };
 
 try

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#07101f">
-  <title>PS5Torrent</title>
+  <title>PSTorrent5</title>
   <style>
     *{box-sizing:border-box}
     :root{--bg:#050a13;--panel:#0c1524;--panel2:#111d30;--line:#23344c;--text:#f4f8ff;--muted:#93a4ba;--blue:#4fa7ff;--blue2:#1769e0;--cyan:#54e2db;--green:#45d483;--yellow:#ffbe55;--red:#ff6b71;--shadow:0 22px 60px rgba(0,0,0,.34)}
@@ -126,7 +126,7 @@
     <header class="topbar">
       <div class="brand">
         <div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 5-5m-5 5-5-5"/><path d="M5 20h14"/><circle cx="5" cy="5" r="1" fill="white" stroke="none"/><circle cx="19" cy="5" r="1" fill="white" stroke="none"/></svg></div>
-        <div><h1>PS5Torrent</h1><p data-i18n="brand.subtitle"></p></div>
+        <div><h1>PSTorrent5</h1><p data-i18n="brand.subtitle"></p></div>
       </div>
       <div class="connection" id="connection"><span class="connection-dot"></span><span class="connection-label" data-i18n="connection.connecting"></span></div>
       <div class="langs" id="langs" role="group" aria-label="Language"></div>
@@ -139,7 +139,7 @@
           <div class="eyebrow" data-i18n="hero.eyebrow"></div>
           <h2 data-i18n="hero.title"></h2>
           <p class="hero-copy" data-i18n="hero.copy"></p>
-          <div class="hero-meta"><span class="chip" id="versionChip">PS5Torrent</span><span class="chip" id="accessChip" data-i18n="hero.checkingAccess"></span><span class="chip" id="capacityChip" data-i18n="hero.capacity"></span></div>
+          <div class="hero-meta"><span class="chip" id="versionChip">PSTorrent5</span><span class="chip" id="accessChip" data-i18n="hero.checkingAccess"></span><span class="chip" id="capacityChip" data-i18n="hero.capacity"></span></div>
         </div>
         <button class="btn" id="refreshNow"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6v5h-5M4 18v-5h5"/><path d="M18 9a7 7 0 0 0-12-2L4 11m2 4a7 7 0 0 0 12 2l2-4"/></svg><span data-i18n="toolbar.refresh"></span></button>
       </div>
@@ -530,7 +530,7 @@
       var fromQuery=null;
       try{fromQuery=new URLSearchParams(location.search).get('lang')}catch(e){}
       if(fromQuery&&I18N[fromQuery])return fromQuery;
-      try{var saved=localStorage.getItem('ps5torrent.lang');if(saved&&I18N[saved])return saved}catch(e){}
+      try{var saved=localStorage.getItem('pstorrent5.lang');if(saved&&I18N[saved])return saved}catch(e){}
       var nav=String(navigator.language||navigator.userLanguage||'en').slice(0,2).toLowerCase();
       return I18N[nav]?nav:'en';
     }
@@ -549,7 +549,7 @@
     function setLang(id){
       if(!I18N[id])return;
       lang=id;
-      try{localStorage.setItem('ps5torrent.lang',id)}catch(e){}
+      try{localStorage.setItem('pstorrent5.lang',id)}catch(e){}
       applyI18n();
       resetForm();
       if(!state.selectedPath)document.querySelectorAll('.path').forEach(function(node){node.classList.remove('selected')});
@@ -596,12 +596,12 @@
     function codeError(code,fallback){var key='error.'+code,text=T(key);return text===key?(fallback||T('error.request')):text}
     function fetchJson(url,options){return fetch(url,options).then(function(response){return response.json().then(function(data){if(!response.ok)throw new Error(data.error_code?codeError(data.error_code,data.error):(data.error||T('error.request')));return data})})}
     function refresh(){
-      return Promise.all([fetchJson('/api/torrents'),fetchJson('/api/status')]).then(function(results){state.torrents=results[0].torrents||[];var info=results[1];setConnection('online',T('connection.online'));el('versionChip').textContent='PS5Torrent v'+(info.version||'2.0');el('accessChip').textContent=info.jailbroken?T('access.etahen'):T('access.elf');el('capacityChip').textContent=T('hero.capacityN',{n:info.capacity||8});el('lastUpdate').textContent=T('downloads.updated',{time:new Date().toLocaleTimeString(localeFor(lang),{hour:'2-digit',minute:'2-digit',second:'2-digit'})});render()}).catch(function(){setConnection('offline',T('connection.offline'));el('lastUpdate').textContent=T('downloads.unreachable');render()})
+      return Promise.all([fetchJson('/api/torrents'),fetchJson('/api/status')]).then(function(results){state.torrents=results[0].torrents||[];var info=results[1];setConnection('online',T('connection.online'));el('versionChip').textContent='PSTorrent5 v'+(info.version||'1.1.0');el('accessChip').textContent=info.jailbroken?T('access.etahen'):T('access.elf');el('capacityChip').textContent=T('hero.capacityN',{n:info.capacity||8});el('lastUpdate').textContent=T('downloads.updated',{time:new Date().toLocaleTimeString(localeFor(lang),{hour:'2-digit',minute:'2-digit',second:'2-digit'})});render()}).catch(function(){setConnection('offline',T('connection.offline'));el('lastUpdate').textContent=T('downloads.unreachable');render()})
     }
     function loadPaths(){
-      return fetchJson('/api/paths').then(function(data){var paths=data.paths||[],available=paths.filter(function(p){return p.exists&&p.writable}),saved='';try{saved=localStorage.getItem('ps5torrent.path')||''}catch(e){}if(!state.selectedPath&&available.some(function(p){return p.path===saved}))state.selectedPath=saved;if(!available.some(function(p){return p.path===state.selectedPath}))state.selectedPath=available.length?available[0].path:'';var box=el('storagePaths');box.innerHTML=paths.map(function(p){var usable=p.exists&&p.writable,status=!p.exists?T('path.notMounted'):(p.writable?T('path.writable'):T('path.noPermission'));return'<button type="button" class="path '+(p.path===state.selectedPath?'selected ':'')+(usable?'':'unavailable')+'" data-path="'+esc(p.path)+'" '+(usable?'':'disabled')+'><div class="path-title"><span>'+(p.removable?T('path.usb'):T('path.disk'))+'</span><span>'+esc(p.label)+'</span></div><div class="path-code">'+esc(p.path)+' · '+status+'</div></button>'}).join('')+(!available.length?'<div class="hint">'+T('path.none')+'</div>':'')}).catch(function(){el('storagePaths').innerHTML='<div class="hint">'+T('path.error')+'</div>'})
+      return fetchJson('/api/paths').then(function(data){var paths=data.paths||[],available=paths.filter(function(p){return p.exists&&p.writable}),saved='';try{saved=localStorage.getItem('pstorrent5.path')||''}catch(e){}if(!state.selectedPath&&available.some(function(p){return p.path===saved}))state.selectedPath=saved;if(!available.some(function(p){return p.path===state.selectedPath}))state.selectedPath=available.length?available[0].path:'';var box=el('storagePaths');box.innerHTML=paths.map(function(p){var usable=p.exists&&p.writable,status=!p.exists?T('path.notMounted'):(p.writable?T('path.writable'):T('path.noPermission'));return'<button type="button" class="path '+(p.path===state.selectedPath?'selected ':'')+(usable?'':'unavailable')+'" data-path="'+esc(p.path)+'" '+(usable?'':'disabled')+'><div class="path-title"><span>'+(p.removable?T('path.usb'):T('path.disk'))+'</span><span>'+esc(p.label)+'</span></div><div class="path-code">'+esc(p.path)+' · '+status+'</div></button>'}).join('')+(!available.length?'<div class="hint">'+T('path.none')+'</div>':'')}).catch(function(){el('storagePaths').innerHTML='<div class="hint">'+T('path.error')+'</div>'})
     }
-    function selectPath(path){state.selectedPath=path;try{localStorage.setItem('ps5torrent.path',path)}catch(e){}el('customPath').value='';document.querySelectorAll('.path').forEach(function(node){node.classList.toggle('selected',node.getAttribute('data-path')===path)})}
+    function selectPath(path){state.selectedPath=path;try{localStorage.setItem('pstorrent5.path',path)}catch(e){}el('customPath').value='';document.querySelectorAll('.path').forEach(function(node){node.classList.toggle('selected',node.getAttribute('data-path')===path)})}
     function torrentAction(id,action){if(action==='remove'&&!confirm(T('confirm.remove')))return;fetchJson('/api/torrents/'+id+'/'+action,{method:'POST'}).then(function(){toast(action==='remove'?T('toast.removed'):T('toast.statusUpdated'),'success');refresh()}).catch(function(e){toast(e.message,'error')})}
     function resetForm(){state.selectedFile=null;el('fileInput').value='';el('fileLabel').textContent=T('add.chooseFile');el('fileHelp').textContent=T('add.fileHelp');el('dropZone').classList.remove('has-file');el('magnetInput').value=''}
     function addTorrent(){
@@ -609,7 +609,7 @@
       if(!state.selectedFile&&!magnet){toast(T('toast.chooseFile'),'error');return}
       if(!path){toast(T('toast.noTarget'),'error');return}
       state.busy=true;el('startDownload').disabled=true;el('startDownload').textContent=T('add.adding');
-      try{localStorage.setItem('ps5torrent.path',path)}catch(e){}var request;if(state.selectedFile){var form=new FormData();form.append('path',path);form.append('torrent',state.selectedFile);request=fetchJson('/api/torrents/upload',{method:'POST',body:form})}else{request=fetchJson('/api/torrents/add',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'magnet='+encodeURIComponent(magnet)+'&path='+encodeURIComponent(path)})}
+      try{localStorage.setItem('pstorrent5.path',path)}catch(e){}var request;if(state.selectedFile){var form=new FormData();form.append('path',path);form.append('torrent',state.selectedFile);request=fetchJson('/api/torrents/upload',{method:'POST',body:form})}else{request=fetchJson('/api/torrents/add',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'magnet='+encodeURIComponent(magnet)+'&path='+encodeURIComponent(path)})}
       function finish(){state.busy=false;el('startDownload').disabled=false;el('startDownload').textContent=T('add.start')}
       request.then(function(data){toast(T('toast.added',{name:data.name||'torrent'}),'success');resetForm();closeModal();refresh();finish()},function(e){toast(e.message,'error');finish()})
     }

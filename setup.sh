@@ -124,7 +124,7 @@ install_sdk() {
     printf 'SDK instalado: %s\n' "$SDK_DIR"
 }
 
-printf 'Preparando PS5Torrent em %s\n' "$SCRIPT_DIR"
+printf 'Preparando PSTorrent5 em %s\n' "$SCRIPT_DIR"
 
 if [ "$(uname -s)" = "Darwin" ] && [ "$INSTALL_DEPS" -eq 1 ]; then
     install_macos_dependencies
@@ -137,7 +137,7 @@ export PS5_PAYLOAD_SDK="$SDK_DIR"
 
 if [ "$BUILD_PROJECT" -eq 1 ]; then
     make -C "$SCRIPT_DIR" clean all
-    printf '\nBuild concluído: %s/ps5_torrent.elf\n' "$SCRIPT_DIR"
+    printf '\nBuild concluído: %s/pstorrent5.elf\n' "$SCRIPT_DIR"
 else
     printf '\nSDK pronto. Para compilar: make\n'
 fi

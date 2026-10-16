@@ -1,7 +1,7 @@
-# 📋 Contenido. Lista de Tareas y Progreso: PS5Torrent (fork)
+# 📋 Contenido. Lista de Tareas y Progreso: PSTorrent5
 
-Fork de trabajo sobre [jfcardososantos/PS5Torrent](https://github.com/jfcardososantos/PS5Torrent) v1.0.0 (GPL-3.0).
-Local: `J:\Codigo\pstorrent5` · Title ID: **`PPSA91289`** · Panel: `http://<IP_PS5>:12389/`
+Fork de trabajo sobre [jfcardososantos/PS5Torrent](https://github.com/jfcardososantos/PS5Torrent) v1.0.0 (GPL-3.0), renombrado a **PSTorrent5**.
+Local: `J:\Codigo\pstorrent5` · Title ID: **`PPSA91289`** · Versión: **1.1.0** · Panel: `http://<IP_PS5>:12389/`
 Referencia técnica completa: `ARCHITECTURE.md`.
 
 ---
@@ -12,16 +12,16 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 - [x] Crear `ARCHITECTURE.md` y `TODO.md` desde las plantillas
 - [x] Subir el SDK a **v0.44** en `setup.sh` (versión + SHA256) y en `.github/workflows/build.yml`, y actualizar `README.md`
 - [x] Crear el fork en GitHub y reconfigurar remotos (`origin` = fork `LiMPbIzK/PSTorrent5`, `upstream` = `jfcardososantos/PS5Torrent`)
-- [x] **Build local en Windows** con llvm-mingw y `build.ps1` (sin WSL, sin sudo, sin make) → genera `ps5_torrent.elf`
+- [x] **Build local en Windows** con llvm-mingw y `build.ps1` (sin WSL, sin sudo, sin make) → genera `pstorrent5.elf`
 - [x] `build.ps1` lee `SRCS`/`CFLAGS`/`INCLUDES`/`LDLIBS` del `Makefile` (sin divergencia con el build de CI/Linux)
-- [x] Dejar de rastrear `ps5_torrent.elf` (artefacto de build; sigue en `.gitignore`). Copia del binario del autor preservada en `.deps/reference/` para análisis
+- [x] Dejar de rastrear el ELF de build (sigue ignorado por `.gitignore`). Copia del binario del autor preservada en `.deps/reference/` para análisis
 - [x] **GitHub Actions habilitado** en el fork y **CI en verde**: runs #1, #2 y #3 con `Build` + `Inspect payload` + `Upload ELF artifact` correctos (≈25 s por build)
-- [x] Verificar que la CI genera `ps5_torrent.elf` sin errores (artefacto `ps5_torrent-elf` descargable)
+- [x] Verificar que la CI genera `pstorrent5.elf` sin errores (artefacto `pstorrent5-elf` descargable)
 - [x] Cargar el ELF en la consola (loader 9021): **carga sin problemas, el SIGILL del issue #1 está resuelto** con el SDK v0.44
 - [x] Abrir el panel desde otro dispositivo de la LAN y añadir un `.torrent` (aceptado correctamente)
 - [ ] **Bug encontrado y corregido**: tras añadir el torrent el panel dejaba de responder. Causa: el announce corre en el bucle principal y el `connect()` a cada peer era bloqueante **sin timeout** (se aplicaba después de conectar) → hasta ~75 s de congelación por peer inalcanzable. Corregido con connect no bloqueante acotado + presupuesto de 4 conexiones por announce. **Pendiente de validar en consola con el ELF nuevo**
 - [ ] Verificación pendiente: descarga completa de un torrent real, estado en el panel y escritura en `/mnt/usb0`
-- [ ] Log del payload: hoy solo va a **klog** (prefijo `[PS5T]`, TCP 3232). Valorar log a fichero + `GET /api/log` para depurar sin herramientas externas
+- [ ] Log del payload: hoy solo va a **klog** (prefijo `[PST5]`, TCP 3232). Valorar log a fichero + `GET /api/log` para depurar sin herramientas externas
 - [ ] Actualizar `README.md`/`CHANGELOG.md` del fork con el nuevo SDK y la matriz de firmwares
 
 **Hito 0.5 (spike crítico, medio día) — decide la arquitectura**
@@ -109,7 +109,7 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 
 ## Hito 6: Folder app, auto-actualización y ShadowMount+
 
-- [ ] Estructura del folder app: `eboot.bin`, `sce_module/libc.prx`, `sce_sys/` (param.json, icon0.png, pic0/pic1 `.dds` BC7, snd0.at9), `engine/ps5_torrent.elf`
+- [ ] Estructura del folder app: `eboot.bin`, `sce_module/libc.prx`, `sce_sys/` (param.json, icon0.png, pic0/pic1 `.dds` BC7, snd0.at9), `engine/pstorrent5.elf`
 - [ ] Title ID `PPSA91289` en `param.json` y `origin-param.json` (`.pkg`, folder app y engine)
 - [ ] ZIP de release con `<TITLE_ID>/` top-level y **todos los ficheros a 0777**
 - [ ] Reutilizar el tooling del boilerplate (conversor a **FSELF** + `libc.prx` shim limpio) para el `eboot.bin` del tile
@@ -117,7 +117,7 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 - [ ] Cliente de update en la app + **helper** que se envía al loader 9021 y hace el swap por `rename()`
 - [ ] Backup de la versión anterior en `previous/PPSA91289-backup`
 - [ ] Arranque/parada del engine por el loader desde el tile (+ endpoint de reinicio del motor)
-- [ ] Staging `<unidad>/.ps5torrent-staging/<hash>/` sin `sce_sys/` ni extensión de imagen
+- [ ] Staging `<unidad>/.pstorrent5-staging/<hash>/` sin `sce_sys/` ni extensión de imagen
 - [ ] Publicación por `POST /api/v1/manual/add` + `POST /api/v1/scan`, con degradación a `rename()` si no hay SM+
 - [ ] Notificaciones (inicio, descarga completa, extracción completa, título publicado, actualización aplicada)
 

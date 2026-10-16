@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SDK_DIR="${PS5_PAYLOAD_SDK:-$SCRIPT_DIR/.deps/ps5-payload-sdk}"
 BUILD_DIR="$SCRIPT_DIR/.deps/archive-build"
 PREFIX_DIR="$SDK_DIR/target/user/homebrew"
-MARKER="$PREFIX_DIR/lib/.ps5torrent-archive-deps-v1"
+MARKER="$PREFIX_DIR/lib/.pstorrent5-archive-deps-v1"
 
 if [ ! -f "$SDK_DIR/toolchain/prospero.sh" ]; then
     printf 'Erro: PS5 payload SDK não encontrado em %s\n' "$SDK_DIR" >&2

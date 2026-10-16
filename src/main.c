@@ -1,14 +1,16 @@
 /**
- * PS5Torrent v2.0 - Web Interface + Multi-Torrent Engine
+ * PSTorrent5 - Web interface + multi-torrent engine
  *
- * BitTorrent Client for PlayStation 5 with embedded web UI.
+ * BitTorrent client for PlayStation 5 with embedded web UI.
  * Access the web interface at http://PS5_IP:12389/
+ *
+ * Fork of jfcardososantos/PS5Torrent (GPL-3.0). See ARCHITECTURE.md.
  *
  * Features:
  *   - Add torrents via magnet links or .torrent file upload
  *   - Choose from known PS5 storage paths (USB, NVMe, internal, etc.)
  *   - Multi-torrent management with simultaneous downloads
- *   - Real-time progress via web UI
+ *   - Real-time progress via web UI (es/en/pt)
  *   - klog console logging
  */
 
@@ -40,6 +42,7 @@
 #include "ps5_jailbreak.h"
 #include "ps5_browser.h"
 #include "web_content.h"
+#include "version.h"
 
 static int etahen_jailbreak_active = 0;
 
@@ -379,7 +382,7 @@ static http_response_t *handle_api_status(const http_request_t *req)
 {
     char resp[512];
     int n = snprintf(resp, sizeof(resp),
-        "{\"status\":\"running\",\"version\":\"2.0\",\"jailbroken\":%s,"
+        "{\"status\":\"running\",\"version\":\"" PSTORRENT5_VERSION "\",\"jailbroken\":%s,"
         "\"torrents\":%d,\"capacity\":%d}",
         etahen_jailbreak_active ? "true" : "false",
         torrent_mgr_count(), torrent_mgr_capacity());
@@ -472,7 +475,7 @@ int main(void)
     /* Initialize networking first */
     if (net_init() < 0) {
         ui_error("Failed to initialize networking");
-        ui_notify("PS5Torrent não iniciou: falha ao preparar a rede.");
+        ui_notify("PSTorrent5 did not start: network setup failed.");
         ps5_browser_shutdown();
         return 1;
     }
@@ -493,7 +496,7 @@ int main(void)
     if (http_server_init(HTTP_PORT) < 0) {
         ui_error("Failed to start HTTP server on port %d", HTTP_PORT);
         ui_error("Make sure port %d is not in use.", HTTP_PORT);
-        ui_notify("PS5Torrent não iniciou: a porta %d já está em uso.",
+        ui_notify("PSTorrent5 did not start: port %d is already in use.",
                   HTTP_PORT);
         net_cleanup();
         ps5_browser_shutdown();
@@ -543,7 +546,7 @@ int main(void)
     get_local_ip(local_ip, sizeof(local_ip));
 
     ui_log("========================================");
-    ui_log("  🎮 PS5Torrent is running!");
+    ui_log("  🎮 PSTorrent5 is running!");
     ui_log("  ");
     ui_log("  Open this URL in your browser:");
     ui_log("  http://%s:%d/", local_ip, HTTP_PORT);
@@ -554,7 +557,7 @@ int main(void)
     ui_log("");
     ui_log("Status: HTTP server active | Torrent engine ready");
 
-    ui_notify("PS5Torrent está ativo\nPainel: http://%s:%d/",
+    ui_notify("PSTorrent5 is running\nPanel: http://%s:%d/",
               local_ip, HTTP_PORT);
 
     if (browser_ready &&
@@ -562,7 +565,7 @@ int main(void)
         ui_log("Opening the web interface on the PS5...");
     else {
         ui_error("Could not open the web interface automatically");
-        ui_notify("Abra o navegador em http://127.0.0.1:%d/", HTTP_PORT);
+        ui_notify("Open the browser at http://127.0.0.1:%d/", HTTP_PORT);
     }
 
     if (default_path[0]) {
@@ -606,6 +609,6 @@ int main(void)
     net_cleanup();
     ps5_browser_shutdown();
 
-    ui_log("PS5Torrent terminated.");
+    ui_log("PSTorrent5 terminated.");
     return 0;
 }

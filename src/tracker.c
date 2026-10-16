@@ -100,7 +100,7 @@ tracker_response_t *tracker_announce(const char *tracker_url,
         "&numwant=%d"
         " HTTP/1.0\r\n"
         "Host: %s\r\n"
-        "User-Agent: PS5Torrent/1.0\r\n"
+        "User-Agent: PSTorrent5/1.1\r\n"
         "Connection: close\r\n"
         "\r\n",
         path_start,

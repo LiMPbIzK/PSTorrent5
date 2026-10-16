@@ -5,7 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STAGING_DIR="$SCRIPT_DIR/pkg/staging"
-ARCHIVE="$SCRIPT_DIR/pkg/ps5-torrent-bundle.tar.gz"
+ARCHIVE="$SCRIPT_DIR/pkg/pstorrent5-bundle.tar.gz"
 DEPLOY_IP=""
 
 usage() {
@@ -40,7 +40,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 printf '%s\n' \
-    "PS5Torrent - bundle experimental" \
+    "PSTorrent5 - bundle experimental" \
     "Aviso: a saída não é um PKG PS5 instalável."
 
 make -C "$SCRIPT_DIR" clean all
@@ -56,7 +56,7 @@ fi
 
 rm -rf "$STAGING_DIR"
 mkdir -p "$STAGING_DIR/sce_sys"
-cp "$SCRIPT_DIR/ps5_torrent.elf" "$STAGING_DIR/eboot.bin"
+cp "$SCRIPT_DIR/pstorrent5.elf" "$STAGING_DIR/eboot.bin"
 
 for asset in "$SCRIPT_DIR"/pkg/sce_sys/*.json "$SCRIPT_DIR"/pkg/sce_sys/*.png; do
     if [ -f "$asset" ]; then

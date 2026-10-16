@@ -10,7 +10,7 @@ LIB_TAG="v2.5"
 LIB_COMMIT="3e159f2ed1d2c2c53c003f79ace378d987773fe3"
 MAC_SHA3_SOURCE="$PROJECT_DIR/tools/ps5_pkg_builder/ManagedSha3.cs"
 MAC_SHA3_PATCH="$PROJECT_DIR/tools/ps5_pkg_builder/libprosperopkg-macos-sha3.patch"
-STAGE_DIR="$PROJECT_DIR/.build/ps5torrent-pkg-root"
+STAGE_DIR="$PROJECT_DIR/.build/pstorrent5-pkg-root"
 OUTPUT_DIR="$PROJECT_DIR/dist"
 DOTNET_CLI_HOME="$PROJECT_DIR/.build/dotnet-home"
 NUGET_PACKAGES="$PROJECT_DIR/.build/nuget-packages"
@@ -70,14 +70,14 @@ fi
 
 rm -rf "$STAGE_DIR"
 mkdir -p "$STAGE_DIR/sce_sys" "$OUTPUT_DIR" "$DOTNET_CLI_HOME" "$NUGET_PACKAGES"
-cp "$PROJECT_DIR/ps5_torrent.elf" "$STAGE_DIR/eboot.bin"
+cp "$PROJECT_DIR/pstorrent5.elf" "$STAGE_DIR/eboot.bin"
 cp "$PROJECT_DIR/pkg/sce_sys/param.json" "$STAGE_DIR/sce_sys/param.json"
 cp "$PROJECT_DIR/pkg/sce_sys/icon0.png" "$STAGE_DIR/sce_sys/icon0.png"
 cp "$PROJECT_DIR/pkg/sce_sys/pic0.png" "$STAGE_DIR/sce_sys/pic0.png"
 cp "$PROJECT_DIR/pkg/sce_sys/pic1.png" "$STAGE_DIR/sce_sys/pic1.png"
 
 dotnet run --configuration Release \
-    --project "$PROJECT_DIR/tools/ps5_pkg_builder/PS5TorrentPkgBuilder.csproj" \
+    --project "$PROJECT_DIR/tools/ps5_pkg_builder/PSTorrent5PkgBuilder.csproj" \
     -- "$STAGE_DIR" "$OUTPUT_DIR"
 
 printf '\nPKG gerado em: %s\n' "$OUTPUT_DIR"

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-PS5Torrent Icon Generator v2.0
+PSTorrent5 Icon Generator
 Generates icon0.png, pic0.png, pic1.png for PS5 PKG using Pillow.
-Much faster than v1 - uses vectorized drawing operations.
+Uses vectorized drawing operations.
 
 Requires: pip install Pillow
 """
@@ -210,7 +210,7 @@ def generate_background(width=1920, height=1080):
         body_font = ImageFont.truetype(font_path, 31)
         small_font = ImageFont.truetype(font_path, 21)
         tx = int(width*.52)
-        draw.text((tx, int(height*.33)), "PS5Torrent", font=title_font,
+        draw.text((tx, int(height*.33)), "PSTorrent5", font=title_font,
                   fill=(238,248,255,255), stroke_width=1,
                   stroke_fill=(23,64,105,255))
         draw.text((tx, int(height*.46)), "Downloads no console, controle na TV.",
@@ -230,7 +230,7 @@ if __name__ == "__main__":
     out_dir = os.path.join(os.path.dirname(__file__), "sce_sys")
     os.makedirs(out_dir, exist_ok=True)
 
-    print("🎮 PS5Torrent Icon Generator v2.0 (vectorized)")
+    print("🎮 PSTorrent5 Icon Generator (vectorized)")
     print(f"   Output: {out_dir}/")
     print()
 

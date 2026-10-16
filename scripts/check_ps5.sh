@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verifica pelo Mac se o loader ou o painel PS5Torrent estão acessíveis.
+# Verifica pelo Mac se o loader ou o painel PSTorrent5 estão acessíveis.
 
 set -u
 
@@ -15,7 +15,7 @@ if ! printf '%s' "$PS5_ADDRESS" | grep -Eq '^[0-9A-Fa-f:.]+$'; then
     exit 2
 fi
 
-printf 'PS5Torrent em %s\n\n' "$PS5_ADDRESS"
+printf 'PSTorrent5 em %s\n\n' "$PS5_ADDRESS"
 
 STATUS="$(curl --silent --show-error --connect-timeout 2 --max-time 4 \
     "http://$PS5_ADDRESS:12389/api/status" 2>/dev/null)"
@@ -46,7 +46,7 @@ done
 printf '\n'
 if [ "$LOADER_FOUND" -eq 1 ]; then
     printf '%s\n' \
-        'O loader está disponível, mas o PS5Torrent não está ativo.' \
+        'O loader está disponível, mas o PSTorrent5 não está ativo.' \
         'Envie novamente o ELF corrigido e rode este diagnóstico outra vez.'
 else
     printf '%s\n' \

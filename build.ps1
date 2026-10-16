@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Compila el payload PS5Torrent (ELF) en Windows sin WSL ni make.
+    Compila el payload PSTorrent5 (ELF) en Windows sin WSL ni make.
 
 .DESCRIPTION
     El Makefile del proyecto es la única fuente de verdad: este script lee de él
@@ -50,7 +50,7 @@ Set-StrictMode -Version Latest
 $Root    = $PSScriptRoot
 $ObjDir  = Join-Path $Root '.deps\obj'
 $BinDir  = Join-Path $Root '.deps\bin'
-$Elf     = Join-Path $Root 'ps5_torrent.elf'
+$Elf     = Join-Path $Root 'pstorrent5.elf'
 
 function Write-Step([string]$Text) { Write-Host "==> $Text" -ForegroundColor Cyan }
 function Fail([string]$Text)       { Write-Host "ERROR: $Text" -ForegroundColor Red; exit 1 }
@@ -188,7 +188,7 @@ foreach ($src in $Srcs) {
 Write-Step "Objetos: $compiled recompilados, $($objects.Count - $compiled) al día"
 
 # ----------------------------------------------------------------- enlazar ----
-Write-Step 'Enlazando ps5_torrent.elf'
+Write-Step 'Enlazando pstorrent5.elf'
 # El volumen del proyecto no siempre trunca al sobrescribir: si el ELF anterior
 # era mayor, quedaria cola del binario viejo. Se borra antes de enlazar.
 if (Test-Path $Elf) { Remove-Item $Elf -Force }
@@ -214,5 +214,5 @@ if ($magic.Count -lt 4 -or $magic[0] -ne 0x7F -or $magic[1] -ne 0x45 -or $magic[
 
 $size = (Get-Item $Elf).Length
 Write-Host ''
-Write-Host ('Build correcto: ps5_torrent.elf ({0:N0} bytes / {1:N1} KB)' -f $size, ($size / 1KB)) -ForegroundColor Green
+Write-Host ('Build correcto: pstorrent5.elf ({0:N0} bytes / {1:N1} KB)' -f $size, ($size / 1KB)) -ForegroundColor Green
 Write-Host 'Enviar a la consola:  make test PS5_HOST=<IP> PS5_PORT=9021   (o usa un enviador de payloads)'

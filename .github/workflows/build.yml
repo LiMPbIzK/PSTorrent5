@@ -38,11 +38,11 @@ jobs:
         run: make --jobs=2
 
       - name: Inspect payload
-        run: file ps5_torrent.elf
+        run: file pstorrent5.elf
 
       - name: Upload ELF artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ps5_torrent-elf
-          path: ps5_torrent.elf
+          name: pstorrent5-elf
+          path: pstorrent5.elf
           if-no-files-found: error

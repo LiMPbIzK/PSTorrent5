@@ -1,8 +1,8 @@
 {
-  "titleId": "PPSA00001",
-  "contentId": "IV9999-PPSA00001_00-PS5TORRENT000001",
-  "contentVersion": "01.000.000",
-  "masterVersion": "01.00",
+  "titleId": "PPSA91289",
+  "contentId": "IV9999-PPSA91289_00-PSTORRENT5000000",
+  "contentVersion": "01.001.000",
+  "masterVersion": "01.01",
   "attribute": 0,
   "attribute2": 0,
   "attribute3": 4,
@@ -18,10 +18,10 @@
   "localizedParameters": {
     "defaultLanguage": "en-US",
     "en-US": {
-      "titleName": "PS5Torrent"
+      "titleName": "PSTorrent5"
     },
     "pt-BR": {
-      "titleName": "PS5Torrent"
+      "titleName": "PSTorrent5"
     }
   },
   "sdkVersion": "0x0100000000000000",

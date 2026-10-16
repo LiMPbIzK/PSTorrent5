@@ -1,6 +1,6 @@
-# Aplicativo PS5Torrent na tela inicial
+# Aplicativo PSTorrent5 na tela inicial
 
-O pacote inclui o próprio `ps5_torrent.elf` como `eboot.bin`. Ao abrir o ícone
+O pacote inclui o próprio `pstorrent5.elf` como `eboot.bin`. Ao abrir o ícone
 na tela inicial, ele inicia o serviço de torrent, mostra uma notificação com o
 endereço de rede e abre `http://127.0.0.1:12389/` no navegador do console. Não é
 necessário enviar o payload novamente a cada uso.

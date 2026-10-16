@@ -10,7 +10,7 @@ dist/
 *~
 
 pkg/staging/
-pkg/ps5torrent_install/
+pkg/pstorrent5_install/
 pkg/transfer_bundle/
 pkg/*.pkg
 pkg/*.tar.gz

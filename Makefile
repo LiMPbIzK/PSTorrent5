@@ -26,7 +26,7 @@ $(error PS5 payload SDK not found at $(PS5_PAYLOAD_SDK). Run ./setup.sh first or
 endif
 
 # Project name
-TARGET = ps5_torrent
+TARGET = pstorrent5
 
 # Source files
 SRCS = src/main.c \

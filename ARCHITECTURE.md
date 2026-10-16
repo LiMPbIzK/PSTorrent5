@@ -1,4 +1,4 @@
-# 🏛️ Arquitectura del Proyecto: PS5Torrent (fork)
+# 🏛️ Arquitectura del Proyecto: PSTorrent5 (fork de PS5Torrent)
 
 ## 1. Reglas Generales y Filosofía
 
@@ -86,7 +86,8 @@ pstorrent5/
 * **E/S de disco:** solo `open()/write()/rename()` POSIX (sin libufs, como el upstream). **Toda publicación de ficheros debe ser atómica** (escribir `.new`/`.upload` + `rename()` en la misma unidad).
 * **Memoria:** buffers estáticos o de tamaño acotado por torrent; nada de reservar por el tamaño total del archivo comprimido (streaming).
 * **Rutas:** toda ruta de usuario se valida (absoluta, sin `..`, sin caracteres de control) y se sanea antes de usarse. Las descargas van siempre a `<config:destino>`, nunca a rutas sueltas.
-* **Identidad de la app:** title ID único **`PPSA91289`** (`contentId: IV9999-PPSA91289_00-PS5TORRENT000001`) para `.elf`, `.pkg` y folder app. El formato es `^[A-Z]{4}[0-9]{5}$` (lo valida LibProsperoPKG) y la banda `PPSA9xxxx` es la de homebrew (no colisiona con juegos).
+* **Identidad de la app:** title ID único **`PPSA91289`** (`contentId: IV9999-PPSA91289_00-PSTORRENT5000000`) para `.elf`, `.pkg` y folder app. El formato es `^[A-Z]{4}[0-9]{5}$` (lo valida LibProsperoPKG) y la banda `PPSA9xxxx` es la de homebrew (no colisiona con juegos). **Cambiar el content ID o el title ID después de publicar la primera release rompe las actualizaciones**: decidirlo ahora es gratis.
+* **Marca y versión:** el producto se llama **PSTorrent5** (fork de PS5Torrent). La versión vive en `include/version.h` (`PSTORRENT5_VERSION`), debe coincidir con el fichero `VERSION` y con `contentVersion` de `pkg/sce_sys/param.json`.
 * **Modos de fichero:** todo fichero del folder app y de su ZIP debe quedar en **modo 0777** (si no, la consola no arranca la app).
 * **Primitivas de red:** los trackers HTTP usan el cliente propio; HTTPS usa la pila de la consola. El cliente HTTP debe ser tolerante a respuestas parciales y nunca bloquear más de un tick.
 * **Errores:** todo fallo visible en el panel con causa concreta (no mensajes genéricos), y toda operación destructiva precedida de verificación (espacio libre, hash, título).
@@ -99,15 +100,15 @@ pstorrent5/
 
 | Artefacto | Instalación | Auto-update |
 |---|---|---|
-| `ps5_torrent.elf` | Enviado al loader (puerto 9021) | Manual |
-| `PS5Torrent.pkg` | Instalador de fPKG | Manual |
+| `pstorrent5.elf` | Enviado al loader (puerto 9021) | Manual |
+| `PSTorrent5.pkg` | Instalador de fPKG | Manual |
 | `<TITLE_ID>.zip` (folder app) | Copiado a `/data/homebrew/PPSA91289/` → tile en el menú (ShadowMount+) | **Automático** |
 
 **Arquitectura de dos piezas (obligada):** un app registrado corre en sandbox, **no puede escribir en su propia carpeta** y la consola **limita sus escrituras a ~2 MB/s** pasados unos cientos de MB. Por eso:
 
-* **`ps5_torrent.elf` (engine):** motor + panel web + extracción, lanzado por el loader. Sin throttling de escritura, acceso total al FS.
+* **`pstorrent5.elf` (engine):** motor + panel web + extracción, lanzado por el loader. Sin throttling de escritura, acceso total al FS.
 * **Tile app `PPSA91289`:** icono en el menú, abre el panel, arranca el engine por el loader si no está, y gestiona la auto-actualización.
-* El release ZIP incluye el engine dentro (`PPSA91289/engine/ps5_torrent.elf`), de modo que el helper actualiza **tile y motor a la vez**.
+* El release ZIP incluye el engine dentro (`PPSA91289/engine/pstorrent5.elf`), de modo que el helper actualiza **tile y motor a la vez**.
 * **Nunca instalar a la vez** el folder app y el `.pkg` con el mismo title ID.
 
 ## 6. Auto-actualización
@@ -122,7 +123,7 @@ pstorrent5/
 
 * **Detección:** SM+ solo considera montable (a) una carpeta con **`sce_sys/param.json` en su raíz**, o (b) un fichero **`.ffpkg` / `.exfat` / `.ffpfs` / `.ffpfsc`**. Todo lo demás es invisible.
 * **El candado es no cumplir esas condiciones durante la descarga.** No se usan permisos ni bloqueos de fichero. La ventana `stability_wait_seconds=10` de SM+ es insuficiente (el `mtime` de la carpeta raíz no cambia al escribir ficheros dentro) y no es de fiar.
-* **Staging:** `<unidad-destino>/.ps5torrent-staging/<info-hash>/` — misma unidad que el destino para que la publicación sea atómica. Sin `sce_sys/`, sin extensión de imagen, con marcador `.ps5torrent-incomplete`.
+* **Staging:** `<unidad-destino>/.pstorrent5-staging/<info-hash>/` — misma unidad que el destino para que la publicación sea atómica. Sin `sce_sys/`, sin extensión de imagen, con marcador `.pstorrent5-incomplete`.
 * **Publicación:** al verificar la descarga (SHA-1 de todas las piezas) y terminar la extracción: `rename()` a `/mnt/usbW/homebrew/PPSA91289/` (o `PPSA91289.ffpkg`) + `POST /api/v1/manual/add` + `POST /api/v1/scan`. Enlace (hardlink) simbólico no se usa.
 * **API de SM+** en `127.0.0.1:10101` (`api_enabled=1` por defecto): `manual/add`, `manual/remove`, `scan`, `storage` (espacio libre), `settings`, `games/info`, `games/mount`, `games/unmount`. Alcanzable desde el sandbox (precedente: el boilerplate usa `127.0.0.1:9021` desde una app).
 * **Degradación sin SM+:** si la API no responde, se publica solo con el `rename()` a un scan path y se avisa.
