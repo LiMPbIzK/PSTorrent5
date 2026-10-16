@@ -20,6 +20,14 @@
 #define MAX_PEERS_PER_TORRENT 50
 
 /**
+ * Maximum new peer connections attempted per tracker announce.
+ *
+ * Each attempt can block for NET_PEER_CONNECT_TIMEOUT_SEC and the web panel
+ * shares the engine's thread, so the work per announce is bounded.
+ */
+#define MAX_PEER_CONNECTS_PER_ANNOUNCE 4
+
+/**
  * Torrent state.
  */
 typedef enum {

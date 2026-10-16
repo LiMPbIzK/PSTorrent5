@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -43,7 +44,7 @@ int net_resolve(const char *hostname, uint32_t *addr_out)
     return 0;
 }
 
-int net_tcp_connect(uint32_t addr, uint16_t port)
+int net_tcp_connect_timeout(uint32_t addr, uint16_t port, int timeout_sec)
 {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) return -1;
@@ -54,12 +55,55 @@ int net_tcp_connect(uint32_t addr, uint16_t port)
     saddr.sin_addr.s_addr = addr;
     saddr.sin_port = htons(port);
 
+    /* Non-blocking connect: this code runs on the same thread as the web
+     * server, so a peer that silently drops SYNs must not stall the panel. */
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags < 0 || fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0) {
+        close(sock);
+        return -1;
+    }
+
     if (connect(sock, (struct sockaddr *)&saddr, sizeof(saddr)) < 0) {
+        if (errno != EINPROGRESS) {
+            close(sock);
+            return -1;
+        }
+
+        fd_set writefds;
+        FD_ZERO(&writefds);
+        FD_SET(sock, &writefds);
+
+        struct timeval tv;
+        tv.tv_sec = timeout_sec;
+        tv.tv_usec = 0;
+
+        int ready = select(sock + 1, NULL, &writefds, NULL, &tv);
+        if (ready <= 0) {
+            close(sock);
+            return -1;
+        }
+
+        int so_error = 0;
+        socklen_t so_len = sizeof(so_error);
+        if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &so_error, &so_len) < 0 ||
+            so_error != 0) {
+            close(sock);
+            return -1;
+        }
+    }
+
+    /* Restore blocking mode for the plain send/recv helpers. */
+    if (fcntl(sock, F_SETFL, flags) < 0) {
         close(sock);
         return -1;
     }
 
     return sock;
+}
+
+int net_tcp_connect(uint32_t addr, uint16_t port)
+{
+    return net_tcp_connect_timeout(addr, port, NET_TRACKER_CONNECT_TIMEOUT_SEC);
 }
 
 int net_send_all(int sock, const void *data, size_t len)

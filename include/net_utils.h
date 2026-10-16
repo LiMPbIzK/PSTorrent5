@@ -11,6 +11,18 @@
 #define HTTP_BUF_SIZE   8192    // HTTP response buffer
 
 /**
+ * Socket timeouts, in seconds.
+ *
+ * The payload is single-threaded: the BitTorrent engine and the web panel share
+ * one thread, so a blocking socket call freezes the whole UI. These bounds are
+ * deliberately short; an unreachable peer must never stall the main loop.
+ */
+#define NET_TRACKER_CONNECT_TIMEOUT_SEC 5
+#define NET_PEER_CONNECT_TIMEOUT_SEC    1
+#define NET_TRACKER_IO_TIMEOUT_SEC      10
+#define NET_PEER_IO_TIMEOUT_SEC         15
+
+/**
  * Initialize networking subsystem.
  * @return 0 on success, -1 on error
  */
@@ -36,6 +48,20 @@ int net_resolve(const char *hostname, uint32_t *addr_out);
  * @return Socket fd on success, -1 on error
  */
 int net_tcp_connect(uint32_t addr, uint16_t port);
+
+/**
+ * Create a TCP socket and connect, giving up after timeout_sec seconds.
+ *
+ * Uses a non-blocking connect plus select() so an unreachable peer cannot
+ * freeze the payload: the BitTorrent engine runs on the same thread as the
+ * web server. The socket is left in blocking mode on success.
+ *
+ * @param addr        Remote IP address (network byte order)
+ * @param port        Remote port (host byte order)
+ * @param timeout_sec Connect timeout in seconds
+ * @return Socket fd on success, -1 on error or timeout
+ */
+int net_tcp_connect_timeout(uint32_t addr, uint16_t port, int timeout_sec);
 
 /**
  * Send all data (handles partial sends).

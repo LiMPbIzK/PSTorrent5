@@ -406,6 +406,10 @@ static int announce_to_tracker(managed_torrent_t *mt)
 
     int contacted = 0;
     int peers_reported = 0;
+    /* A blocking connect can cost up to NET_PEER_CONNECT_TIMEOUT_SEC, and the
+     * web panel shares this thread, so the number of new peers tried per
+     * announce is bounded. The rest are retried on the next announce. */
+    int connects_this_round = 0;
     mt->tracker_announces++;
     mt->tracker_interval = 30;
 
@@ -453,13 +457,17 @@ static int announce_to_tracker(managed_torrent_t *mt)
             if (already) continue;
             if (peer_slot < 0 && mt->num_peers >= MAX_PEERS_PER_TORRENT)
                 continue;
+            if (connects_this_round >= MAX_PEER_CONNECTS_PER_ANNOUNCE)
+                break;
+            connects_this_round++;
 
             /* Connect to peer */
-            int sock = net_tcp_connect(tr->peers[i].ip,
-                                       ntohs(tr->peers[i].port));
+            int sock = net_tcp_connect_timeout(tr->peers[i].ip,
+                                               ntohs(tr->peers[i].port),
+                                               NET_PEER_CONNECT_TIMEOUT_SEC);
             if (sock < 0) continue;
 
-            net_set_timeout(sock, 15);
+            net_set_timeout(sock, NET_PEER_IO_TIMEOUT_SEC);
 
             uint8_t remote_id[20];
             if (peer_handshake(sock, mt->torrent->info_hash,
@@ -630,8 +638,9 @@ int torrent_mgr_tick(void)
             }
         }
 
-        /* If no active peers, try to re-announce */
-        if (mt->active_peers == 0 && now - mt->last_announce_time >= 30) {
+        /* If no active peers, try to re-announce. Kept short so that the
+         * bounded peer-connect budget accumulates peers quickly. */
+        if (mt->active_peers == 0 && now - mt->last_announce_time >= 5) {
             announce_to_tracker(mt);
             mt->last_announce_time = now;
         }

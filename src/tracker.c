@@ -121,11 +121,12 @@ tracker_response_t *tracker_announce(const char *tracker_url,
     uint32_t addr;
     if (net_resolve(host, &addr) < 0) return NULL;
 
-    int sock = net_tcp_connect(addr, (uint16_t)port);
+    int sock = net_tcp_connect_timeout(addr, (uint16_t)port,
+                                       NET_TRACKER_CONNECT_TIMEOUT_SEC);
     if (sock < 0) return NULL;
 
     /* Set timeout */
-    net_set_timeout(sock, 30);
+    net_set_timeout(sock, NET_TRACKER_IO_TIMEOUT_SEC);
 
     /* Send HTTP request */
     if (net_send_all(sock, request, (size_t)req_len) < 0) {
