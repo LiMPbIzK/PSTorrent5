@@ -43,6 +43,7 @@
 #include "ps5_browser.h"
 #include "web_content.h"
 #include "version.h"
+#include "log.h"
 
 static int etahen_jailbreak_active = 0;
 
@@ -380,13 +381,39 @@ static http_response_t *handle_api_paths(const http_request_t *req)
  */
 static http_response_t *handle_api_status(const http_request_t *req)
 {
-    char resp[512];
+    char resp[1024];
     int n = snprintf(resp, sizeof(resp),
         "{\"status\":\"running\",\"version\":\"" PSTORRENT5_VERSION "\",\"jailbroken\":%s,"
-        "\"torrents\":%d,\"capacity\":%d}",
+        "\"torrents\":%d,\"capacity\":%d,\"log_path\":\"%s\"}",
         etahen_jailbreak_active ? "true" : "false",
-        torrent_mgr_count(), torrent_mgr_capacity());
+        torrent_mgr_count(), torrent_mgr_capacity(), log_path());
     return http_response_new(200, "application/json", resp, (size_t)n);
+}
+
+/**
+ * API: Serve the tail of the payload log as text/plain.
+ *
+ * The log also lives in a file on the console (see log_init), so it can be
+ * read over FTP; this endpoint is the quick path from the browser:
+ * http://<PS5-IP>:12389/api/log
+ */
+static http_response_t *handle_api_log(const http_request_t *req)
+{
+    size_t capacity = 64 * 1024;
+    char *buffer = malloc(capacity);
+    size_t length;
+    http_response_t *response;
+
+    (void)req;
+
+    if (!buffer)
+        return json_error(500, "no_memory", "Out of memory");
+
+    length = log_tail(buffer, capacity);
+    response = http_response_new(200, "text/plain; charset=utf-8",
+                                 buffer, length);
+    free(buffer);
+    return response;
 }
 
 /**
@@ -467,6 +494,12 @@ int main(void)
     /* Initialize subsystems */
     ui_init();
 
+    /* El log a fichero va primero, para que quede constancia de todo lo demas */
+    if (log_init() == 0)
+        ui_log("Log file: %s", log_path());
+    else
+        ui_error("Could not open a log file; logging to klog only");
+
     ui_print_banner();
 
     /* The system browser API requires UserService to be initialized first. */
@@ -510,6 +543,7 @@ int main(void)
     http_server_register("/api/torrents", handle_api_torrents);
     http_server_register("/api/paths", handle_api_paths);
     http_server_register("/api/status", handle_api_status);
+    http_server_register("/api/log", handle_api_log);
 
     /* Catch-all web UI handler must remain last. */
     http_server_register("/", handle_web_index);
@@ -608,6 +642,7 @@ int main(void)
     http_server_shutdown();
     net_cleanup();
     ps5_browser_shutdown();
+    log_close();
 
     ui_log("PSTorrent5 terminated.");
     return 0;

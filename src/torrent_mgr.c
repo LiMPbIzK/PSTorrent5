@@ -2,6 +2,7 @@
 #include "net_utils.h"
 #include "sha1.h"
 #include "http_server.h"
+#include "ui.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -251,6 +252,11 @@ int torrent_mgr_start(int index)
     mt->error_msg[0] = '\0';
     mt->error_code[0] = '\0';
 
+    ui_log("start #%d '%s': %zu pieces x %lld B, %zu files, dest=%s",
+           index, mt->name, mt->torrent->num_pieces,
+           (long long)mt->torrent->piece_length, mt->torrent->num_files,
+           mt->save_path);
+
     /* Create save directory */
     if (ensure_directory_tree(mt->save_path) < 0) {
         int saved_errno = errno;
@@ -306,6 +312,9 @@ int torrent_mgr_start(int index)
     mt->last_speed_calc = get_time_sec();
     mt->last_downloaded = mt->downloaded;
     mt->last_uploaded = mt->uploaded;
+
+    ui_log("start #%d ok: state=downloading, %s", index,
+           mt->torrent->announce ? mt->torrent->announce : "no announce url");
 
     return 0;
 }
@@ -414,6 +423,7 @@ static int announce_to_tracker(managed_torrent_t *mt)
      * web panel shares this thread, so the number of new peers tried per
      * announce is bounded. The rest are retried on the next announce. */
     int connects_this_round = 0;
+    int connects_ok = 0;
     mt->tracker_announces++;
     mt->tracker_interval = 30;
 
@@ -492,6 +502,7 @@ static int announce_to_tracker(managed_torrent_t *mt)
             p->last_request = 0;
 
             mt->active_peers++;
+            connects_ok++;
 
             peer_send_interested(sock);
           }
@@ -503,6 +514,9 @@ static int announce_to_tracker(managed_torrent_t *mt)
         mt->error_type = TERR_NONE;
         mt->error_msg[0] = '\0';
         mt->error_code[0] = '\0';
+        ui_log("announce ok: %d tracker(s), %d peer(s) offered, %d connected "
+               "(active=%d)", contacted, peers_reported, connects_ok,
+               mt->active_peers);
         return 0;
     }
 
@@ -520,6 +534,9 @@ static int announce_to_tracker(managed_torrent_t *mt)
                  "Peers were found, but the connections failed; will retry automatically");
     }
     mt->error_type = TERR_NO_PEERS;
+    ui_log("announce failed: %s (trackers_ok=%d peers_offered=%d tried=%d): %s",
+           mt->error_code, contacted, peers_reported, connects_this_round,
+           mt->error_msg);
     return -1;
 }
 

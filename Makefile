@@ -30,6 +30,7 @@ TARGET = pstorrent5
 
 # Source files
 SRCS = src/main.c \
+       src/log.c \
        src/sha1.c \
        src/bencode.c \
        src/torrent.c \

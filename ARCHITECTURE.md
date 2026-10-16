@@ -59,6 +59,7 @@ pstorrent5/
 │   ├── file_io.c  net_utils.c  ui.c  ps5_jailbreak.c  ps5_browser.c
 │   ├── http_server.c         # servidor HTTP propio + rutas /api/*
 │   ├── torrent_mgr.c         # gestor multi-torrent
+│   ├── log.c                 # log a fichero (klog + GET /api/log)
 │   ├── storage_paths.c       # rutas conocidas (hoy hardcodeadas)
 │   ├── config/               # (nuevo) config persistente JSON
 │   ├── extract/              # (nuevo) cola + backends de extracción
@@ -91,6 +92,7 @@ pstorrent5/
 * **Modos de fichero:** todo fichero del folder app y de su ZIP debe quedar en **modo 0777** (si no, la consola no arranca la app).
 * **Primitivas de red:** los trackers HTTP usan el cliente propio; HTTPS usa la pila de la consola. El cliente HTTP debe ser tolerante a respuestas parciales y nunca bloquear más de un tick.
 * **Errores:** todo fallo visible en el panel con causa concreta (no mensajes genéricos), y toda operación destructiva precedida de verificación (espacio libre, hash, título).
+* **Diagnóstico:** todo mensaje pasa por `ui_log()`/`ui_error()` y por tanto va **a klog y al fichero** (`src/log.c`: `/data/pstorrent5/pstorrent5.log`, rotación a 256 KB, sin buffer para sobrevivir a una caída). El panel lo muestra en `GET /api/log` y publica la ruta en `/api/status`. **No depender de herramientas externas para depurar**: cualquier fallo debe poder leerse desde el navegador o por FTP.
 * **Idiomas (i18n):** todo texto visible vive en la tabla `I18N` de `src/web/index.html` (hoy **es/en/pt**), referenciada con atributos `data-i18n*` en el HTML y `T('clave')` en el JS. **No se dejan textos de interfaz embebidos en C/JS**: el servidor responde en inglés (para klog y como reserva) más un **`error_code` estable**, y el panel traduce el código. Añadir un idioma es una entrada en `I18N` y otra en `LANGS`; `tools/check-i18n.js` (y el paso de CI) verifican que ninguna clave falte en ningún idioma.
 * **Pila (stack):** prohibido reservar buffers grandes en pila (el hilo es compartido con el motor); los buffers de trabajo (>4 KB) son `static` o del montón. Referencia: `process_peer()` y el antiguo `data_b64[1 MB]` de la subida de `.torrent`.
 * **Estilo:** coincidir con el código existente: C estilo K&R, identificadores en `snake_case`, prefijos por módulo (`torrent_`, `tracker_`, `storage_`), cabeceras con guardas `PS5TORRENT_*_H` y comentarios de bloque `/** ... */` en las APIs públicas.

@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "log.h"
 #include "version.h"
 #include <stdio.h>
 #include <stdarg.h>
@@ -117,54 +118,58 @@ void ui_print_progress(const torrent_t *torrent, const piece_mgr_t *pm,
 
 void ui_log(const char *fmt, ...)
 {
+    char buf[512];
     va_list args;
+
     va_start(args, fmt);
-
-    if (use_klog) {
-        klog_printf("[PST5] ");
-        /* klog_printf supports format strings */
-        /* We need to use a temporary buffer for the format */
-        char buf[512];
-        vsnprintf(buf, sizeof(buf), fmt, args);
-        klog_puts(buf);
-    } else {
-        vprintf(fmt, args);
-        printf("\n");
-    }
-
+    vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
+
+    /* Doble salida: klog (para la consola y la red) y el fichero de log. */
+    if (use_klog)
+        klog_printf("[PST5] %s\n", buf);
+    else
+        printf("%s\n", buf);
+
+    log_append(buf);
 }
 
 void ui_error(const char *fmt, ...)
 {
-    va_list args;
-    va_start(args, fmt);
-
     char buf[512];
+    char line[560];
+    va_list args;
+
+    va_start(args, fmt);
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
 
-    if (use_klog) {
+    if (use_klog)
         klog_printf("[PST5] ERROR: %s\n", buf);
-    } else {
+    else
         fprintf(stderr, "ERROR: %s\n", buf);
-    }
+
+    snprintf(line, sizeof(line), "ERROR: %s", buf);
+    log_append(line);
 }
 
 void ui_success(const char *fmt, ...)
 {
-    va_list args;
-    va_start(args, fmt);
-
     char buf[512];
+    char line[560];
+    va_list args;
+
+    va_start(args, fmt);
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
 
-    if (use_klog) {
+    if (use_klog)
         klog_printf("[PST5] SUCCESS: %s\n", buf);
-    } else {
+    else
         printf("SUCCESS: %s\n", buf);
-    }
+
+    snprintf(line, sizeof(line), "OK: %s", buf);
+    log_append(line);
 }
 
 void ui_notify(const char *fmt, ...)

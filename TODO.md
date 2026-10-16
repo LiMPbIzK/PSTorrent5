@@ -21,7 +21,7 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 - [x] Abrir el panel desde otro dispositivo de la LAN y añadir un `.torrent` (aceptado correctamente)
 - [ ] **Bug encontrado y corregido**: tras añadir el torrent el panel dejaba de responder. Causa: el announce corre en el bucle principal y el `connect()` a cada peer era bloqueante **sin timeout** (se aplicaba después de conectar) → hasta ~75 s de congelación por peer inalcanzable. Corregido con connect no bloqueante acotado + presupuesto de 4 conexiones por announce. **Pendiente de validar en consola con el ELF nuevo**
 - [ ] Verificación pendiente: descarga completa de un torrent real, estado en el panel y escritura en `/mnt/usb0`
-- [ ] Log del payload: hoy solo va a **klog** (prefijo `[PST5]`, TCP 3232). Valorar log a fichero + `GET /api/log` para depurar sin herramientas externas
+- [x] **Log a fichero implementado**: `/data/pstorrent5/pstorrent5.log` (reserva en `/data` y `/tmp`), rotación a 256 KB, volcado sin buffer para que sobreviva a una caída, visible en **`GET /api/log`** y en la ruta que muestra el panel. Se añaden trazas al motor (arranque del torrent, resultado del announce y errores)
 - [ ] Actualizar `README.md`/`CHANGELOG.md` del fork con el nuevo SDK y la matriz de firmwares
 - [ ] **Regenerar el arte del tile**: `pkg/sce_sys/icon0.png`, `pic0.png` y `pic1.png` son los del proyecto original y llevan el nombre "PS5Torrent" dibujado. `pkg/generate_icon.py` ya escribe "PSTorrent5", así que basta regenerarlos (requiere Pillow) o retocar el arte
 
