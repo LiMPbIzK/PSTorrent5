@@ -45,6 +45,7 @@
 #include "version.h"
 #include "log.h"
 #include "net_http.h"
+#include "dht.h"
 
 static int etahen_jailbreak_active = 0;
 static volatile int shutdown_requested = 0;
@@ -582,6 +583,10 @@ int main(void)
     /* Initialize torrent manager */
     torrent_mgr_init();
 
+    /* DHT: la via para tener peers cuando el tracker solo da uno. Si falla, el
+     * cliente sigue funcionando solo con trackers. */
+    dht_init(torrent_mgr_on_dht_peer);
+
     /* Show available storage paths */
     storage_path_t paths[MAX_STORAGE_PATHS];
     size_t num_paths = 0;
@@ -639,6 +644,7 @@ int main(void)
 
     /* Main event loop */
     uint64_t last_status = 0;
+    uint64_t last_dht_log = 0;
     int running = 1;
 
     while (running) {
@@ -654,6 +660,9 @@ int main(void)
         /* Tick torrent manager */
         torrent_mgr_tick();
 
+        /* DHT: descubrimiento de peers sin tracker. Nunca bloquea. */
+        dht_tick();
+
         /* Print status every 5 seconds. Se imprime tambien cuando hay torrents
          * parados o en error: sirve de latido para saber que el bucle sigue
          * vivo aunque no haya trafico. */
@@ -661,6 +670,13 @@ int main(void)
             last_status = now;
             if (torrent_mgr_count() > 0)
                 torrent_mgr_log_progress();
+
+            /* Estado de la DHT cada minuto: cuantos nodos y cuantos peers ha
+             * aportado. Es la traza que dice si el descubrimiento funciona. */
+            if (now - last_dht_log > 60000) {
+                last_dht_log = now;
+                dht_log_status();
+            }
         }
 
         /* Small delay to prevent busy-waiting */
@@ -678,6 +694,7 @@ int main(void)
     /* Cleanup */
     ui_log("Shutting down...");
     torrent_mgr_shutdown();
+    dht_shutdown();
     http_server_shutdown();
     net_http_shutdown();
     net_cleanup();

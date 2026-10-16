@@ -23,6 +23,14 @@
 #define NET_PEER_IO_TIMEOUT_SEC         8
 
 /**
+ * Espera de un tracker UDP (BEP-15), por peticion: hay dos (connect y announce).
+ *
+ * Los publicos contestan en decimas de segundo, asi que 3 s es de sobra y
+ * mantiene acotada la pausa del panel web, que comparte este hilo.
+ */
+#define NET_UDP_TRACKER_TIMEOUT_SEC     3
+
+/**
  * Initialize networking subsystem.
  * @return 0 on success, -1 on error
  */
@@ -110,5 +118,41 @@ void net_close(int sock);
  * @param output    Output buffer (must be at least input_len*3 + 1)
  */
 void net_url_encode(const unsigned char *input, size_t input_len, char *output);
+
+/**
+ * Create a UDP socket on a local port.
+ * @param local_port Local port (0 = efimero)
+ * @return Socket fd on success, -1 on error
+ */
+int net_udp_open(uint16_t local_port);
+
+/**
+ * Send one datagram.
+ * @param addr Remote IPv4 address (network byte order)
+ * @param port Remote port (host byte order)
+ * @return 0 on success, -1 on error
+ */
+int net_udp_send_to(int sock, uint32_t addr, uint16_t port,
+                    const void *data, size_t len);
+
+/**
+ * Receive one datagram without blocking.
+ *
+ * Usa select() con tiempo cero, igual que la E/S de peers: el motor comparte
+ * hilo con el panel web y no puede quedarse esperando.
+ *
+ * @param from_addr/from_port Salida con el origen (pueden ser NULL)
+ * @return Bytes recibidos, 0 si no habia nada, -1 en error
+ */
+int net_udp_recv_from(int sock, void *buf, size_t len,
+                      uint32_t *from_addr, uint16_t *from_port);
+
+/**
+ * Receive one datagram waiting up to timeout_sec.
+ * @return Bytes recibidos, 0 si se agoto el tiempo, -1 en error
+ */
+int net_udp_recv_from_timeout(int sock, void *buf, size_t len,
+                              uint32_t *from_addr, uint16_t *from_port,
+                              int timeout_sec);
 
 #endif /* PS5TORRENT_NET_UTILS_H */

@@ -188,6 +188,88 @@ void net_close(int sock)
     if (sock >= 0) close(sock);
 }
 
+int net_udp_open(uint16_t local_port)
+{
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+
+    if (sock < 0) return -1;
+
+    /* Para hablar DHT hay que poder recibir respuestas en el mismo puerto desde
+     * el que se pregunta, asi que se ata a un puerto (0 = el que de el sistema). */
+    struct sockaddr_in local;
+    memset(&local, 0, sizeof(local));
+    local.sin_family = AF_INET;
+    local.sin_addr.s_addr = htonl(INADDR_ANY);
+    local.sin_port = htons(local_port);
+
+    if (bind(sock, (struct sockaddr *)&local, sizeof(local)) < 0) {
+        ui_log("udp: bind to port %u failed", (unsigned)local_port);
+        close(sock);
+        return -1;
+    }
+
+    return sock;
+}
+
+int net_udp_send_to(int sock, uint32_t addr, uint16_t port,
+                    const void *data, size_t len)
+{
+    struct sockaddr_in dst;
+
+    if (sock < 0) return -1;
+
+    memset(&dst, 0, sizeof(dst));
+    dst.sin_family = AF_INET;
+    dst.sin_addr.s_addr = addr;
+    dst.sin_port = htons(port);
+
+    if (sendto(sock, data, len, 0, (struct sockaddr *)&dst, sizeof(dst)) < 0) {
+        if (errno == EINTR)
+            return net_udp_send_to(sock, addr, port, data, len);
+        return -1;
+    }
+
+    return 0;
+}
+
+int net_udp_recv_from_timeout(int sock, void *buf, size_t len,
+                              uint32_t *from_addr, uint16_t *from_port,
+                              int timeout_sec)
+{
+    struct sockaddr_in src;
+    socklen_t src_len = sizeof(src);
+    ssize_t n;
+    fd_set readfds;
+    struct timeval tv;
+    int ready;
+
+    if (sock < 0) return -1;
+
+    FD_ZERO(&readfds);
+    FD_SET(sock, &readfds);
+    tv.tv_sec = timeout_sec;
+    tv.tv_usec = 0;
+
+    ready = select(sock + 1, &readfds, NULL, NULL, &tv);
+    if (ready == 0) return 0;   /* no habia nada: no es un error */
+    if (ready < 0) return -1;
+
+    n = recvfrom(sock, buf, len, 0, (struct sockaddr *)&src, &src_len);
+    if (n < 0)
+        return -1;
+
+    if (from_addr) *from_addr = src.sin_addr.s_addr;
+    if (from_port) *from_port = ntohs(src.sin_port);
+
+    return (int)n;
+}
+
+int net_udp_recv_from(int sock, void *buf, size_t len,
+                      uint32_t *from_addr, uint16_t *from_port)
+{
+    return net_udp_recv_from_timeout(sock, buf, len, from_addr, from_port, 0);
+}
+
 void net_url_encode(const unsigned char *input, size_t input_len, char *output)
 {
     static const char hex[] = "0123456789abcdef";

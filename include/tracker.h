@@ -53,6 +53,18 @@ tracker_response_t *tracker_announce(const char *tracker_url,
                                      const tracker_params_t *params);
 
 /**
+ * Trackers publicos que se anaden a los de cada .torrent.
+ *
+ * Medido el 16-10-2026: los trackers del .torrent pueden estar filtrados por la
+ * red o repartir un solo peer; los UDP de esta lista responden con decenas de
+ * peers para el mismo torrent. Para desactivarlos, vaciar la lista.
+ *
+ * @param count Salida: cuantos hay
+ * @return Lista de URLs (no liberar)
+ */
+const char *const *tracker_extra_list(size_t *count);
+
+/**
  * Free a tracker response.
  */
 void tracker_response_free(tracker_response_t *resp);

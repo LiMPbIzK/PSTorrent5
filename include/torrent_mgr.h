@@ -32,7 +32,7 @@
  * torrents carry 20+ announce URLs; without this bound the loop would block for
  * minutes and the panel would look dead.
  */
-#define MAX_TRACKERS_PER_ANNOUNCE 2
+#define MAX_TRACKERS_PER_ANNOUNCE 3
 
 /**
  * Wall-clock budget for one announce round, in seconds.
@@ -173,6 +173,11 @@ typedef struct {
     uint64_t  last_uploaded;
     uint64_t  start_time;
 
+    /* Por que tracker va la siguiente ronda de announce. Sin esto, los dos
+     * primeros de la lista que contesten bien acaparan todas las rondas y el
+     * resto (incluidos los trackers extra) no se probarian nunca. */
+    size_t    announce_cursor;
+
     // Source info
     int       is_magnet;      // 1 = from magnet link
     char      magnet_uri[1024]; // Original magnet URI
@@ -282,6 +287,12 @@ int torrent_mgr_find(const unsigned char info_hash[20]);
  * @return Number of active torrents being processed
  */
 int torrent_mgr_tick(void);
+
+/**
+ * Callback que la DHT llama al encontrar un peer (se registra en dht_init).
+ */
+void torrent_mgr_on_dht_peer(const unsigned char info_hash[20],
+                             const peer_addr_t *peer);
 
 /**
  * Get JSON status string for all torrents.

@@ -38,6 +38,7 @@ SRCS = src/main.c \
        src/net_utils.c \
        src/tracker.c \
        src/peer_wire.c \
+       src/dht.c \
        src/piece_mgr.c \
        src/file_io.c \
        src/ui.c \

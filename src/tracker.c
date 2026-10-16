@@ -106,10 +106,212 @@ static int parse_http_response(const unsigned char *resp, size_t resp_len,
     return 0;
 }
 
+/* ------------------------------------------------------------ trackers UDP */
+
+/**
+ * Trackers publicos que se prueban SIEMPRE, ademas de los del .torrent.
+ *
+ * Motivo medido el 16-10-2026: los trackers del .torrent pueden estar filtrados
+ * por la red (el de la pelicula cae a los 5,00 s exactos) o repartir un unico
+ * peer (el de Ubuntu). Estos UDP, en cambio, respondieron desde la red del
+ * usuario con decenas de peers para el mismo torrent. Para quitar esta lista
+ * basta con vaciarla.
+ *
+ * Solo estan los tres que contestaron de verdad: un tracker UDP muerto cuesta
+ * hasta dos timeouts (connect + announce) de panel congelado por ronda.
+ */
+static const char *extra_trackers[] = {
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.demonii.com:1337/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+};
+
+const char *const *tracker_extra_list(size_t *count)
+{
+    if (count) *count = sizeof(extra_trackers) / sizeof(extra_trackers[0]);
+    return extra_trackers;
+}
+
+static uint32_t read_be32(const unsigned char *p)
+{
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+static void write_be32(unsigned char *p, uint32_t v)
+{
+    p[0] = (unsigned char)(v >> 24);
+    p[1] = (unsigned char)(v >> 16);
+    p[2] = (unsigned char)(v >> 8);
+    p[3] = (unsigned char)v;
+}
+
+static void write_be64(unsigned char *p, uint64_t v)
+{
+    for (int i = 0; i < 8; i++)
+        p[i] = (unsigned char)(v >> (56 - i * 8));
+}
+
+/**
+ * Announce to a UDP tracker (BEP-15).
+ *
+ * Dos peticiones de ida y vuelta: connect (16 bytes) y announce (98 bytes).
+ * Timeouts cortos porque esto corre en el mismo hilo que el panel web.
+ */
+static tracker_response_t *announce_udp(const char *host, uint16_t port,
+                                        const tracker_params_t *params)
+{
+    static const unsigned char protocol_id[8] =
+        { 0x00, 0x00, 0x04, 0x17, 0x27, 0x10, 0x19, 0x80 };
+    static uint32_t tx_seq = 0x5a17;
+    unsigned char req[98];
+    unsigned char buf[2048];
+    uint32_t addr = 0;
+    uint32_t tx = ++tx_seq;
+    uint64_t connection_id = 0;
+    uint32_t from_ip = 0;
+    uint16_t from_port = 0;
+    int sock;
+    int n;
+
+    if (net_resolve(host, &addr) < 0) {
+        ui_log("announce: could not resolve '%s'", host);
+        return NULL;
+    }
+
+    sock = net_udp_open(0);
+    if (sock < 0)
+        return NULL;
+
+    /* 1. Connect: se pide un connection_id (caduca en un minuto). */
+    memset(req, 0, 16);
+    memcpy(req, protocol_id, 8);
+    write_be32(req + 8, 0);      /* action = connect */
+    write_be32(req + 12, tx);
+
+    if (net_udp_send_to(sock, addr, port, req, 16) < 0) {
+        net_close(sock);
+        return NULL;
+    }
+
+    n = net_udp_recv_from_timeout(sock, buf, sizeof(buf), &from_ip, &from_port,
+                                  NET_UDP_TRACKER_TIMEOUT_SEC);
+    if (n < 16 || read_be32(buf) != 0 || read_be32(buf + 4) != tx) {
+        ui_log("announce: UDP %s:%u did not answer the connect", host,
+               (unsigned)port);
+        net_close(sock);
+        return NULL;
+    }
+    for (int i = 0; i < 8; i++)
+        connection_id = (connection_id << 8) | buf[8 + i];
+
+    /* 2. Announce. */
+    memset(req, 0, sizeof(req));
+    write_be64(req, connection_id);
+    write_be32(req + 8, 1);                      /* action = announce */
+    write_be32(req + 12, tx);
+    memcpy(req + 16, params->info_hash, 20);
+    memcpy(req + 36, params->peer_id, 20);
+    write_be64(req + 56, (uint64_t)(params->downloaded > 0 ? params->downloaded : 0));
+    write_be64(req + 64, (uint64_t)(params->left > 0 ? params->left : 0));
+    write_be64(req + 72, (uint64_t)(params->uploaded > 0 ? params->uploaded : 0));
+    write_be32(req + 80, 2);                     /* event = started */
+    write_be32(req + 84, 0);                     /* ip: que lo deduzca el tracker */
+    write_be32(req + 88, tx);                    /* key */
+    write_be32(req + 92, MAX_TRACKER_PEERS);     /* num_want */
+    req[96] = (unsigned char)(params->port >> 8);
+    req[97] = (unsigned char)(params->port & 0xff);
+
+    if (net_udp_send_to(sock, addr, port, req, 98) < 0) {
+        net_close(sock);
+        return NULL;
+    }
+
+    n = net_udp_recv_from_timeout(sock, buf, sizeof(buf), &from_ip, &from_port,
+                                  NET_UDP_TRACKER_TIMEOUT_SEC);
+    net_close(sock);
+
+    if (n < 20) {
+        ui_log("announce: UDP %s:%u did not answer the announce", host,
+               (unsigned)port);
+        return NULL;
+    }
+
+    uint32_t action = read_be32(buf);
+    if (action == 3) {
+        char reason[128];
+        size_t reason_len = (size_t)(n - 8);
+        if (reason_len >= sizeof(reason)) reason_len = sizeof(reason) - 1;
+        memcpy(reason, buf + 8, reason_len);
+        reason[reason_len] = '\0';
+        ui_log("announce: UDP %s:%u refused: %s", host, (unsigned)port, reason);
+        return NULL;
+    }
+    if (action != 1) {
+        ui_log("announce: UDP %s:%u unexpected action %u", host,
+               (unsigned)port, (unsigned)action);
+        return NULL;
+    }
+
+    tracker_response_t *tr = calloc(1, sizeof(*tr));
+    if (!tr)
+        return NULL;
+
+    tr->interval = (int)read_be32(buf + 8);
+    tr->incomplete = (int)read_be32(buf + 12);
+    tr->complete = (int)read_be32(buf + 16);
+
+    int count = (n - 20) / 6;
+    if (count > MAX_TRACKER_PEERS) count = MAX_TRACKER_PEERS;
+    if (count > 0) {
+        tr->peers = calloc((size_t)count, sizeof(peer_addr_t));
+        if (tr->peers) {
+            for (int i = 0; i < count; i++) {
+                memcpy(&tr->peers[i].ip, buf + 20 + (size_t)i * 6, 4);
+                memcpy(&tr->peers[i].port, buf + 20 + (size_t)i * 6 + 4, 2);
+            }
+            tr->num_peers = count;
+        }
+    }
+
+    ui_log("announce: UDP %s:%u -> %d peer(s), %d seeder(s), %d leecher(s)",
+           host, (unsigned)port, tr->num_peers, tr->complete, tr->incomplete);
+
+    return tr;
+}
+
 tracker_response_t *tracker_announce(const char *tracker_url,
                                      const tracker_params_t *params)
 {
     if (!tracker_url || !params) return NULL;
+
+    /* UDP (BEP-15): la via que funciona en redes que filtran los trackers HTTP.
+     * No lleva ruta, solo host:puerto. */
+    if (strncmp(tracker_url, "udp://", 6) == 0) {
+        const char *rest = tracker_url + 6;
+        const char *slash = strchr(rest, '/');
+        const char *colon = strchr(rest, ':');
+        char udp_host[256];
+        int udp_port = 6969;
+        size_t udp_host_len;
+
+        if (colon && (!slash || colon < slash)) {
+            udp_host_len = (size_t)(colon - rest);
+            udp_port = atoi(colon + 1);
+        } else {
+            udp_host_len = slash ? (size_t)(slash - rest) : strlen(rest);
+        }
+
+        if (udp_host_len == 0 || udp_host_len >= sizeof(udp_host))
+            return NULL;
+        memcpy(udp_host, rest, udp_host_len);
+        udp_host[udp_host_len] = '\0';
+
+        if (udp_port <= 0 || udp_port > 65535)
+            udp_port = 6969;
+
+        return announce_udp(udp_host, (uint16_t)udp_port, params);
+    }
 
     /* URL del tracker: http://host:port/announce o https://host/announce */
     const char *full_url = tracker_url;

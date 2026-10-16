@@ -4,6 +4,7 @@
 #include "http_server.h"
 #include "bencode.h"
 #include "version.h"
+#include "dht.h"
 #include "ui.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -348,6 +349,10 @@ int torrent_mgr_start(int index)
            (long long)mt->torrent->piece_length, mt->torrent->num_files,
            mt->save_path);
 
+    /* Interesarse por este info_hash en la DHT: es la fuente de peers que no
+     * depende del tracker. */
+    dht_want(mt->info_hash);
+
     /* Create save directory */
     if (ensure_directory_tree(mt->save_path) < 0) {
         int saved_errno = errno;
@@ -431,6 +436,8 @@ void torrent_mgr_stop(int index)
     managed_torrent_t *mt = &torrents[index];
 
     mt->state = TORRENT_STOPPED;
+
+    dht_unwant(mt->info_hash);
 
     /* Close all peer connections */
     for (int i = 0; i < mt->num_peers; i++) {
@@ -679,6 +686,28 @@ static int connect_from_pool(managed_torrent_t *mt, uint64_t deadline,
 }
 
 /**
+ * Callback de la DHT: un peer nuevo para uno de los torrents activos.
+ *
+ * La DHT no sabe de torrents; solo devuelve (info_hash, direccion). Aqui se
+ * traduce a un torrent concreto y se mete en su pool de candidatos, el mismo
+ * que alimenta el tracker y PEX.
+ */
+void torrent_mgr_on_dht_peer(const unsigned char info_hash[20],
+                             const peer_addr_t *peer)
+{
+    int idx;
+
+    if (!peer)
+        return;
+
+    idx = torrent_mgr_find(info_hash);
+    if (idx < 0)
+        return;
+
+    peer_pool_add(&torrents[idx], peer);
+}
+
+/**
  * Announce to tracker for a specific torrent.
  */
 static int announce_to_tracker(managed_torrent_t *mt)
@@ -711,18 +740,32 @@ static int announce_to_tracker(managed_torrent_t *mt)
     mt->tracker_announces++;
     mt->tracker_interval = 30;
 
-    /* Try the primary URL and every tier from announce-list. Many torrents
-     * keep a dead primary tracker but contain working HTTP fallbacks. */
-    size_t url_count = mt->torrent->announce_list_count +
+    /* Trackers del .torrent + los extra de tracker_extra_list(). Con el cursor
+     * por rondas, todos acaban probandose: si no, los dos primeros que contesten
+     * bien acaparan el turno para siempre. */
+    size_t own_count = mt->torrent->announce_list_count +
                        (mt->torrent->announce ? 1u : 0u);
-    for (size_t url_index = 0; url_index < url_count; url_index++) {
-        const char *url = url_index == 0 && mt->torrent->announce
-                        ? mt->torrent->announce
-                        : mt->torrent->announce_list[
-                            url_index - (mt->torrent->announce ? 1u : 0u)];
+    size_t extra_count = 0;
+    const char *const *extras = tracker_extra_list(&extra_count);
+    size_t url_count = own_count + extra_count;
+
+    for (size_t k = 0; k < url_count; k++) {
+        size_t url_index = (mt->announce_cursor + k) % url_count;
+        const char *url;
+
+        if (url_index < own_count) {
+            url = url_index == 0 && mt->torrent->announce
+                ? mt->torrent->announce
+                : mt->torrent->announce_list[
+                    url_index - (mt->torrent->announce ? 1u : 0u)];
+        } else {
+            url = extras[url_index - own_count];
+        }
+
         if (!url) continue;
         if (strncmp(url, "http://", 7) != 0 &&
-            strncmp(url, "https://", 8) != 0)
+            strncmp(url, "https://", 8) != 0 &&
+            strncmp(url, "udp://", 6) != 0)
             continue;
         if (mt->torrent->announce && url != mt->torrent->announce &&
             strcmp(url, mt->torrent->announce) == 0) continue;
@@ -738,9 +781,12 @@ static int announce_to_tracker(managed_torrent_t *mt)
         /* Bounded work per round: the web panel shares this thread. */
         if (tried_trackers >= MAX_TRACKERS_PER_ANNOUNCE ||
             get_time_sec() >= deadline) {
+            /* La proxima ronda empieza donde nos hemos quedado. */
+            mt->announce_cursor = (url_index + 1) % url_count;
             break;
         }
         tried_trackers++;
+        mt->announce_cursor = (url_index + 1) % url_count;
 
         tracker_response_t *tr = tracker_announce(url, &params);
 
@@ -1114,6 +1160,7 @@ int torrent_mgr_tick(void)
             mt->speed_up = 0;
             ui_log("torrent #%d complete: %s (%.1f MB)",
                    i, mt->name, (double)mt->downloaded / (1024.0 * 1024.0));
+            dht_unwant(mt->info_hash);
             rx_teardown(mt);
             continue;
         }
