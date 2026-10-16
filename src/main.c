@@ -623,11 +623,13 @@ int main(void)
         /* Tick torrent manager */
         int active = torrent_mgr_tick();
 
-        /* Print status every 5 seconds */
+        /* Print status every 5 seconds. Se imprime tambien cuando hay torrents
+         * parados o en error: sirve de latido para saber que el bucle sigue
+         * vivo aunque no haya trafico. */
         if (now - last_status > 5000) {
             last_status = now;
-            if (active > 0) {
-                ui_log("Active torrents: %d | Total: %d/%d",
+            if (active > 0 || torrent_mgr_count() > 0) {
+                ui_log("heartbeat: active=%d total=%d/%d",
                        active, torrent_mgr_count(), torrent_mgr_capacity());
             }
         }

@@ -20,6 +20,7 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 - [x] Cargar el ELF en la consola (loader 9021): **carga sin problemas, el SIGILL del issue #1 está resuelto** con el SDK v0.44
 - [x] Abrir el panel desde otro dispositivo de la LAN y añadir un `.torrent` (aceptado correctamente)
 - [ ] **Bug encontrado y corregido**: tras añadir el torrent el panel dejaba de responder. Causa: el announce corre en el bucle principal y el `connect()` a cada peer era bloqueante **sin timeout** (se aplicaba después de conectar) → hasta ~75 s de congelación por peer inalcanzable. Corregido con connect no bloqueante acotado + presupuesto de 4 conexiones por announce. **Pendiente de validar en consola con el ELF nuevo**
+- [ ] **Corregir `get_local_ip()`**: en el log aparece `http://6.4.6.0:12389/`, una IP que no existe. Solo afecta al aviso de la notificación y al banner (el panel funciona por la IP real), pero induce a error
 - [ ] Verificación pendiente: descarga completa de un torrent real, estado en el panel y escritura en `/mnt/usb0`
 - [x] **Log a fichero implementado**: `/data/pstorrent5/pstorrent5.log` (reserva en `/data` y `/tmp`), rotación a 256 KB, volcado sin buffer para que sobreviva a una caída, visible en **`GET /api/log`** y en la ruta que muestra el panel. Se añaden trazas al motor (arranque del torrent, resultado del announce y errores)
 - [ ] Actualizar `README.md`/`CHANGELOG.md` del fork con el nuevo SDK y la matriz de firmwares

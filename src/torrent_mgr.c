@@ -424,6 +424,7 @@ static int announce_to_tracker(managed_torrent_t *mt)
      * announce is bounded. The rest are retried on the next announce. */
     int connects_this_round = 0;
     int connects_ok = 0;
+    int connects_failed = 0;
     mt->tracker_announces++;
     mt->tracker_interval = 30;
 
@@ -479,13 +480,17 @@ static int announce_to_tracker(managed_torrent_t *mt)
             int sock = net_tcp_connect_timeout(tr->peers[i].ip,
                                                ntohs(tr->peers[i].port),
                                                NET_PEER_CONNECT_TIMEOUT_SEC);
-            if (sock < 0) continue;
+            if (sock < 0) {
+                connects_failed++;
+                continue;
+            }
 
             net_set_timeout(sock, NET_PEER_IO_TIMEOUT_SEC);
 
             uint8_t remote_id[20];
             if (peer_handshake(sock, mt->torrent->info_hash,
                                mt->peer_id, remote_id) < 0) {
+                connects_failed++;
                 net_close(sock);
                 continue;
             }
@@ -515,8 +520,8 @@ static int announce_to_tracker(managed_torrent_t *mt)
         mt->error_msg[0] = '\0';
         mt->error_code[0] = '\0';
         ui_log("announce ok: %d tracker(s), %d peer(s) offered, %d connected "
-               "(active=%d)", contacted, peers_reported, connects_ok,
-               mt->active_peers);
+               "(%d failed, active=%d)", contacted, peers_reported, connects_ok,
+               connects_failed, mt->active_peers);
         return 0;
     }
 
@@ -534,9 +539,9 @@ static int announce_to_tracker(managed_torrent_t *mt)
                  "Peers were found, but the connections failed; will retry automatically");
     }
     mt->error_type = TERR_NO_PEERS;
-    ui_log("announce failed: %s (trackers_ok=%d peers_offered=%d tried=%d): %s",
-           mt->error_code, contacted, peers_reported, connects_this_round,
-           mt->error_msg);
+    ui_log("announce failed: %s (trackers_ok=%d peers_offered=%d tried=%d "
+           "failed=%d): %s", mt->error_code, contacted, peers_reported,
+           connects_this_round, connects_failed, mt->error_msg);
     return -1;
 }
 

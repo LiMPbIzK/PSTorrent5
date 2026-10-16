@@ -1,6 +1,7 @@
 #include "tracker.h"
 #include "net_utils.h"
 #include "bencode.h"
+#include "ui.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -119,17 +120,30 @@ tracker_response_t *tracker_announce(const char *tracker_url,
 
     /* Resolve host and connect */
     uint32_t addr;
-    if (net_resolve(host, &addr) < 0) return NULL;
+    ui_log("announce: probing %s:%u%s", host, (unsigned)port, path_start);
+
+    if (net_resolve(host, &addr) < 0) {
+        ui_log("announce: could not resolve '%s'", host);
+        return NULL;
+    }
+
+    ui_log("announce: resolved, connecting (timeout %ds)",
+           NET_TRACKER_CONNECT_TIMEOUT_SEC);
 
     int sock = net_tcp_connect_timeout(addr, (uint16_t)port,
                                        NET_TRACKER_CONNECT_TIMEOUT_SEC);
-    if (sock < 0) return NULL;
+    if (sock < 0) {
+        ui_log("announce: connect to %s:%u failed", host, (unsigned)port);
+        return NULL;
+    }
 
     /* Set timeout */
     net_set_timeout(sock, NET_TRACKER_IO_TIMEOUT_SEC);
+    ui_log("announce: connected, sending request (%d bytes)", req_len);
 
     /* Send HTTP request */
     if (net_send_all(sock, request, (size_t)req_len) < 0) {
+        ui_log("announce: send failed");
         net_close(sock);
         return NULL;
     }
@@ -147,6 +161,8 @@ tracker_response_t *tracker_announce(const char *tracker_url,
 
     net_close(sock);
 
+    ui_log("announce: response %zu bytes", resp_pos);
+
     if (resp_pos == 0) return NULL;
 
     /* Parse HTTP response */
@@ -154,8 +170,13 @@ tracker_response_t *tracker_announce(const char *tracker_url,
     const unsigned char *body;
     size_t body_len;
 
-    if (parse_http_response(resp_buf, resp_pos, &status_code, &body, &body_len) < 0)
+    if (parse_http_response(resp_buf, resp_pos, &status_code, &body, &body_len) < 0) {
+        ui_log("announce: could not parse the HTTP response (%zu bytes)",
+               resp_pos);
         return NULL;
+    }
+
+    ui_log("announce: HTTP %d, body %zu bytes", status_code, body_len);
 
     tracker_response_t *tr = calloc(1, sizeof(tracker_response_t));
     if (!tr) return NULL;
@@ -183,6 +204,7 @@ tracker_response_t *tracker_announce(const char *tracker_url,
     /* Parse bencoded tracker response */
     bcode_node_t *root = bcode_parse(body, body_len);
     if (!root) {
+        ui_log("announce: tracker response is not bencode");
         tr->failure_reason = strdup("Failed to parse tracker response");
         return tr;
     }

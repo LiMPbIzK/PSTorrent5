@@ -34,6 +34,13 @@ int net_resolve(const char *hostname, uint32_t *addr_out)
         return 0;
     }
 
+    /* Un nombre de una sola etiqueta (sin punto) no es un tracker legitimo y
+     * dispara una busqueda DNS que puede bloquear el hilo principal: el motor
+     * de torrents comparte hilo con el panel web, asi que se rechaza antes de
+     * llegar al resolver. */
+    if (!strchr(hostname, '.') && strcmp(hostname, "localhost") != 0)
+        return -1;
+
     /* Try DNS resolution */
     struct hostent *he = gethostbyname(hostname);
     if (!he || he->h_addrtype != AF_INET) {
