@@ -264,39 +264,65 @@ int torrent_mgr_add_magnet(const char *magnet_uri, const char *save_path)
 }
 
 /**
- * Descarta la pieza en curso. La pieza sigue marcada como libre en el gestor,
- * asi que volvera a salir en la siguiente seleccion: es descarga redundante
- * pero nunca deja una pieza a medias.
+ * Reinicia una ranura de descarga.
  */
-static void rx_reset(managed_torrent_t *mt)
+static void rx_slot_reset(managed_torrent_t *mt, int slot)
 {
-    mt->rx_piece = -1;
-    mt->rx_length = 0;
-    mt->rx_have = 0;
-    mt->rx_next = 0;
-    mt->rx_pending = 0;
-    mt->rx_peer = -1;
+    mt->rx[slot].piece = -1;
+    mt->rx[slot].length = 0;
+    mt->rx[slot].have = 0;
+    mt->rx[slot].next = 0;
+    mt->rx[slot].pending = 0;
+    mt->rx[slot].peer = -1;
 }
 
 /**
- * Libera el buffer de pieza y reinicia el estado de descarga.
+ * Abandona la pieza de una ranura devolviendola a la cola del gestor (si no, se
+ * quedaria marcada como pedida y no se repartiria nunca mas).
+ */
+static void rx_slot_drop(managed_torrent_t *mt, int slot)
+{
+    if (mt->rx[slot].piece >= 0)
+        piece_mgr_failed(&mt->piece_mgr, (size_t)mt->rx[slot].piece);
+    rx_slot_reset(mt, slot);
+}
+
+/** Ranura que esta descargando esa pieza (-1 si ninguna). */
+static int rx_slot_for_piece(const managed_torrent_t *mt, int piece)
+{
+    for (int s = 0; s < mt->rx_slots; s++) {
+        if (mt->rx[s].piece == piece)
+            return s;
+    }
+    return -1;
+}
+
+/** Todas las piezas a medias vuelven a la cola. */
+static void rx_drop_all(managed_torrent_t *mt)
+{
+    for (int s = 0; s < mt->rx_slots; s++)
+        rx_slot_drop(mt, s);
+}
+
+/** Abandona la ranura que servia ese peer (se ha caido o nos ha bloqueado). */
+static void rx_drop_peer(managed_torrent_t *mt, int peer_idx)
+{
+    for (int s = 0; s < mt->rx_slots; s++) {
+        if (mt->rx[s].piece >= 0 && mt->rx[s].peer == peer_idx)
+            rx_slot_drop(mt, s);
+    }
+}
+
+/**
+ * Libera los buffers de pieza y reinicia el estado de descarga.
  */
 static void rx_teardown(managed_torrent_t *mt)
 {
-    free(mt->rx_buf);
-    mt->rx_buf = NULL;
-    rx_reset(mt);
-}
-
-/**
- * Abandona la pieza en curso devolviendola a la cola del gestor (si no, se
- * quedaria marcada como pedida y no se volveria a repartir nunca).
- */
-static void rx_drop(managed_torrent_t *mt)
-{
-    if (mt->rx_piece >= 0)
-        piece_mgr_failed(&mt->piece_mgr, (size_t)mt->rx_piece);
-    rx_reset(mt);
+    for (int s = 0; s < PEER_INFLIGHT_MAX; s++) {
+        free(mt->rx[s].buf);
+        mt->rx[s].buf = NULL;
+        rx_slot_reset(mt, s);
+    }
 }
 
 /**
@@ -328,8 +354,8 @@ static void peer_close(managed_torrent_t *mt, int peer_idx)
     p->bitfield_len = 0;
     p->has_bitfield = 0;
 
-    if (mt->rx_peer == peer_idx)
-        rx_drop(mt);
+    if (mt->rx_slots > 0)
+        rx_drop_peer(mt, peer_idx);
 }
 
 int torrent_mgr_start(int index)
@@ -400,20 +426,16 @@ int torrent_mgr_start(int index)
                    mt->torrent->total_size,
                    mt->torrent->pieces);
 
-    /* Buffer de la pieza en curso: se pide por bloques de 16 KB y se acumula
-     * aqui hasta tener la pieza completa (para verificar el SHA-1 de una vez). */
+    /* Ranuras de descarga: cuantas piezas a la vez, segun lo que ocupa una.
+     * Con piezas de 256 KB se usan las cuatro; con piezas de 16 MB, una sola y
+     * no se reservan 64 MB de RAM. Los buffers se reservan al usarse. */
     rx_teardown(mt);
-    mt->rx_buf = malloc((size_t)mt->torrent->piece_length);
-    if (!mt->rx_buf) {
-        mt->state = TORRENT_ERROR;
-        mt->error_type = TERR_WRITE_FAILED;
-        strncpy(mt->error_code, "no_memory", sizeof(mt->error_code) - 1);
-        snprintf(mt->error_msg, sizeof(mt->error_msg),
-                 "Not enough memory for a %lld byte piece buffer",
-                 (long long)mt->torrent->piece_length);
-        return -1;
-    }
-    rx_reset(mt);
+    mt->rx_slots = PEER_INFLIGHT_MAX;
+    if (mt->torrent->piece_length > 1024 * 1024)
+        mt->rx_slots = 2;
+    if (mt->torrent->piece_length > 4 * 1024 * 1024)
+        mt->rx_slots = 1;
+    rx_drop_all(mt);
 
     /* Initialize file writer */
     if (file_writer_init(&mt->file_writer, mt->torrent, mt->save_path) < 0) {
@@ -466,7 +488,8 @@ void torrent_mgr_stop(int index)
     mt->speed_down = 0;
     mt->speed_up = 0;
 
-    rx_drop(mt);           /* La pieza a medias vuelve a la cola */
+    rx_drop_all(mt);       /* Las piezas a medias vuelven a la cola */
+    mt->rx_slots = 0;
     file_writer_finish(&mt->file_writer);
 }
 
@@ -1140,38 +1163,46 @@ static void process_peer(managed_torrent_t *mt, int peer_idx)
         break;
     }
 
-    /* Bloque de datos: se copia en su offset de la pieza en curso. */
+    /* Bloque de datos: se copia en su offset en la ranura de esa pieza. */
     if (ret == 0 && msg.data_len > 0) {
-        if (p->sock < 0) return;
-        if (msg.piece_index != (uint32_t)mt->rx_piece || !mt->rx_buf) {
-            /* De otra pieza (peticion antigua o de otro peer): se descarta */
-            return;
-        }
-        if ((uint64_t)msg.piece_begin + msg.data_len > mt->rx_length)
-            return;
-        if (mt->rx_pending > 0)
-            mt->rx_pending--;
+        int slot = rx_slot_for_piece(mt, (int)msg.piece_index);
+        inflight_t *fl;
 
-        memcpy(mt->rx_buf + msg.piece_begin, block_buf, msg.data_len);
-        mt->rx_have += msg.data_len;
+        if (p->sock < 0) return;
+
+        /* Ninguna ranura espera esa pieza (peticion antigua, o la soltamos
+         * porque el peer se cayo): se descarta. */
+        if (slot < 0)
+            return;
+
+        fl = &mt->rx[slot];
+
+        if (!fl->buf || (uint64_t)msg.piece_begin + msg.data_len > fl->length)
+            return;
+        if (fl->pending > 0)
+            fl->pending--;
+
+        memcpy(fl->buf + msg.piece_begin, block_buf, msg.data_len);
+        fl->have += msg.data_len;
+        fl->last_activity = get_time_sec();
         p->downloaded += msg.data_len;
         mt->rx_blocks++;
 
         if (mt->rx_blocks <= 3 || mt->rx_blocks % 200 == 0) {
             ui_log("block %zu: piece %u begin %u len %u (%u/%u of piece)",
                    mt->rx_blocks, msg.piece_index, msg.piece_begin,
-                   msg.data_len, mt->rx_have, mt->rx_length);
+                   msg.data_len, fl->have, fl->length);
         }
 
-        if (mt->rx_have < mt->rx_length)
+        if (fl->have < fl->length)
             return;  /* Pieza incompleta: faltan bloques */
 
         /* Pieza completa: verificar SHA-1 y escribir de una vez */
-        if (piece_mgr_complete(&mt->piece_mgr, (size_t)mt->rx_piece,
-                               mt->rx_buf, mt->rx_length) == 0) {
-            file_writer_write_piece(&mt->file_writer, mt->rx_buf,
-                                    mt->rx_length, (size_t)mt->rx_piece);
-            mt->downloaded += mt->rx_length;
+        if (piece_mgr_complete(&mt->piece_mgr, (size_t)fl->piece,
+                               fl->buf, fl->length) == 0) {
+            file_writer_write_piece(&mt->file_writer, fl->buf,
+                                    fl->length, (size_t)fl->piece);
+            mt->downloaded += fl->length;
             mt->rx_pieces_done++;
             if (mt->rx_pieces_done % 20 == 0 || mt->rx_pieces_done == 1) {
                 ui_log("piece %zu/%zu ok (%.1f MB downloaded)",
@@ -1179,48 +1210,75 @@ static void process_peer(managed_torrent_t *mt, int peer_idx)
                        (double)mt->downloaded / (1024.0 * 1024.0));
             }
         } else {
-            ui_log("piece %d failed SHA-1; retrying", mt->rx_piece);
-            piece_mgr_failed(&mt->piece_mgr, (size_t)mt->rx_piece);
+            ui_log("piece %d failed SHA-1; retrying", fl->piece);
+            piece_mgr_failed(&mt->piece_mgr, (size_t)fl->piece);
         }
-        rx_reset(mt);
+        rx_slot_reset(mt, slot);
     }
 }
 
 /**
  * Pide bloques por adelantado.
  *
- * El protocolo no admite bloques mayores de 16 KB, asi que una pieza se pide
- * en varios bloques: se elige la siguiente pieza pendiente, se pide de uno en
- * uno hasta llenar la ventana (PEER_MAX_REQUESTS) y se va pidiendo mas segun
- * llegan. Si el peer que la servia se cae o nos bloquea, la pieza se descarta y
- * se reintenta desde cero.
+ * El protocolo no admite bloques mayores de 16 KB, asi que cada pieza se pide en
+ * varios bloques hasta llenar la ventana (PEER_MAX_REQUESTS) y se va pidiendo mas
+ * segun llegan. Se mantienen varias piezas a la vez, una por peer: es lo que
+ * permite tirar de todos los que respondan en vez de ir a la velocidad del
+ * unico que hubiera.
  */
 static void peer_pump(managed_torrent_t *mt)
 {
-    if (!mt->rx_buf || mt->state != TORRENT_DOWNLOADING)
+    if (mt->state != TORRENT_DOWNLOADING)
         return;
 
-    /* Pieza en curso cuyo peer ya no sirve: se devuelve a la cola */
-    if (mt->rx_piece >= 0) {
-        torrent_peer_t *serving = mt->rx_peer >= 0 ? &mt->peers[mt->rx_peer] : NULL;
+    /* Ranuras cuyo peer ya no sirve: la pieza vuelve a la cola */
+    for (int s = 0; s < mt->rx_slots; s++) {
+        torrent_peer_t *serving;
+
+        if (mt->rx[s].piece < 0)
+            continue;
+
+        serving = mt->rx[s].peer >= 0 ? &mt->peers[mt->rx[s].peer] : NULL;
         if (!serving || serving->state != PEER_STATE_READY || serving->choked) {
-            rx_drop(mt);
+            rx_slot_drop(mt, s);
+            continue;
         }
+
+        /* Mudo durante dos minutos: se suelta la ranura para que la coja otro,
+         * en vez de quedarse esperando a un peer que no va a contestar. */
+        if (get_time_sec() - mt->rx[s].last_activity > 120)
+            rx_slot_drop(mt, s);
     }
 
-    /* Elegir pieza y peer si no hay ninguna en curso. Solo se pide a un peer
-     * que ha anunciado lo que tiene: pedirle una pieza que no posee es una
-     * violacion del protocolo y los clientes desconectan por ello. */
-    if (mt->rx_piece < 0) {
+    /* Asignar una pieza libre a cada ranura que este vacia, con un peer
+     * distinto en cada una. Solo se pide a un peer que ha anunciado lo que
+     * tiene: pedirle una pieza que no posee es una violacion del protocolo y
+     * los clientes desconectan por ello. */
+    for (int s = 0; s < mt->rx_slots; s++) {
         int candidate = -1;
         int candidate_piece = -1;
 
+        if (mt->rx[s].piece >= 0)
+            continue;
+
         for (int i = 0; i < mt->num_peers; i++) {
             torrent_peer_t *peer = &mt->peers[i];
+            int busy = 0;
             int piece;
 
             if (peer->state != PEER_STATE_READY || peer->choked ||
                 !peer->has_bitfield)
+                continue;
+
+            /* Un peer por pieza, para que la ventana de peticiones de cada uno
+             * siga siendo simple y el trabajo se reparta. */
+            for (int t = 0; t < mt->rx_slots; t++) {
+                if (mt->rx[t].piece >= 0 && mt->rx[t].peer == i) {
+                    busy = 1;
+                    break;
+                }
+            }
+            if (busy)
                 continue;
 
             piece = piece_mgr_get_next(&mt->piece_mgr, peer->bitfield,
@@ -1233,35 +1291,50 @@ static void peer_pump(managed_torrent_t *mt)
         }
 
         if (candidate < 0)
-            return;  /* Ningun peer disponible con piezas que necesitemos */
+            break;  /* Ningun peer disponible con piezas que necesitemos */
 
-        mt->rx_piece = candidate_piece;
-        mt->rx_length = (uint32_t)mt->torrent->piece_length;
+        /* El buffer se reserva la primera vez que se usa esa ranura. */
+        if (!mt->rx[s].buf) {
+            mt->rx[s].buf = malloc((size_t)mt->torrent->piece_length);
+            if (!mt->rx[s].buf)
+                break;
+        }
+
+        mt->rx[s].piece = candidate_piece;
+        mt->rx[s].length = (uint32_t)mt->torrent->piece_length;
         if ((size_t)candidate_piece == mt->torrent->num_pieces - 1) {
-            mt->rx_length = (uint32_t)(mt->torrent->total_size -
+            mt->rx[s].length = (uint32_t)(mt->torrent->total_size -
                               (int64_t)candidate_piece * mt->torrent->piece_length);
         }
-        mt->rx_have = 0;
-        mt->rx_next = 0;
-        mt->rx_pending = 0;
-        mt->rx_peer = candidate;
+        mt->rx[s].have = 0;
+        mt->rx[s].next = 0;
+        mt->rx[s].pending = 0;
+        mt->rx[s].peer = candidate;
+        mt->rx[s].last_activity = get_time_sec();
         piece_mgr_request(&mt->piece_mgr, (size_t)candidate_piece);
     }
 
-    /* Llenar la ventana de peticiones */
-    while (mt->rx_pending < PEER_MAX_REQUESTS && mt->rx_next < mt->rx_length) {
-        uint32_t remaining = mt->rx_length - mt->rx_next;
-        uint32_t len = remaining > PEER_BLOCK_SIZE ? PEER_BLOCK_SIZE : remaining;
-        torrent_peer_t *p = &mt->peers[mt->rx_peer];
+    /* Llenar la ventana de peticiones de cada ranura */
+    for (int s = 0; s < mt->rx_slots; s++) {
+        if (mt->rx[s].piece < 0)
+            continue;
 
-        if (peer_send_request(p->sock, (uint32_t)mt->rx_piece, mt->rx_next,
-                              len) < 0) {
-            rx_drop(mt);
-            return;
+        while (mt->rx[s].pending < PEER_MAX_REQUESTS &&
+               mt->rx[s].next < mt->rx[s].length) {
+            uint32_t remaining = mt->rx[s].length - mt->rx[s].next;
+            uint32_t len = remaining > PEER_BLOCK_SIZE ? PEER_BLOCK_SIZE : remaining;
+            torrent_peer_t *p = &mt->peers[mt->rx[s].peer];
+
+            if (peer_send_request(p->sock, (uint32_t)mt->rx[s].piece,
+                                  mt->rx[s].next, len) < 0) {
+                rx_slot_drop(mt, s);
+                break;
+            }
+
+            p->last_request = (uint32_t)mt->rx[s].piece;
+            mt->rx[s].next += len;
+            mt->rx[s].pending++;
         }
-        p->last_request = (uint32_t)mt->rx_piece;
-        mt->rx_next += len;
-        mt->rx_pending++;
     }
 }
 
