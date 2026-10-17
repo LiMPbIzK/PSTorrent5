@@ -18,7 +18,18 @@
  * deliberately short; an unreachable peer must never stall the main loop.
  */
 #define NET_TRACKER_CONNECT_TIMEOUT_SEC 5
-#define NET_PEER_CONNECT_TIMEOUT_SEC    3
+#define NET_PEER_CONNECT_TIMEOUT_SEC    2
+
+/**
+ * Espera del handshake de un peer, en segundos.
+ *
+ * Muchos peers aceptan TCP y luego no dicen nada (NAT, cortafuegos, cliente
+ * dormido). Medido sobre una muestra de 30: 4 aceptan TCP y solo 1 completa el
+ * handshake. Con 8 s por cada uno, el panel se congelaba de sobra; 4 s es de
+ * sobra para un handshake legitimo (que cabe en un solo paquete).
+ */
+#define NET_PEER_HANDSHAKE_TIMEOUT_SEC  4
+
 #define NET_TRACKER_IO_TIMEOUT_SEC      8
 #define NET_PEER_IO_TIMEOUT_SEC         8
 

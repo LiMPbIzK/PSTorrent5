@@ -588,7 +588,10 @@ static int connect_one(managed_torrent_t *mt, const peer_addr_t *addr)
         return 0;
     }
 
-    net_set_timeout(sock, NET_PEER_IO_TIMEOUT_SEC);
+    /* El handshake tiene su propio presupuesto: hay peers que aceptan TCP y
+     * luego se quedan callados, y con el timeout largo de E/S el panel se
+     * quedaba muerto 8 s por cada uno. */
+    net_set_timeout(sock, NET_PEER_HANDSHAKE_TIMEOUT_SEC);
 
     uint8_t remote_id[20];
     uint8_t peer_reserved[8];
@@ -597,6 +600,8 @@ static int connect_one(managed_torrent_t *mt, const peer_addr_t *addr)
         net_close(sock);
         return 0;
     }
+
+    net_set_timeout(sock, NET_PEER_IO_TIMEOUT_SEC);
 
     if (peer_slot < 0)
         peer_slot = mt->num_peers++;
@@ -1003,6 +1008,15 @@ static void process_peer(managed_torrent_t *mt, int peer_idx)
 
     case 0xff:
         return;  /* Keep-alive */
+
+    case 9:
+        /* PORT (BEP-5): el peer dice en que puerto UDP escucha su nodo DHT.
+         * No hablamos DHT con los peers, asi que se ignora en silencio en vez
+         * de ensuciar el log con "msg id 9". */
+        return;
+
+    case 13:
+        return;  /* SUGGEST (BEP-3 incremental): tampoco se usa */
 
     case PEER_MSG_EXTENDED:
         peer_handle_extended(mt, peer_idx, &msg, block_buf);
