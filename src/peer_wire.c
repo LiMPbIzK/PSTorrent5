@@ -20,38 +20,40 @@ void peer_handshake_init(peer_handshake_t *hs,
     memcpy(hs->peer_id, peer_id, 20);
 }
 
-int peer_handshake(int sock,
-                   const unsigned char info_hash[20],
-                   const unsigned char peer_id[20],
-                   unsigned char peer_id_out[20],
-                   uint8_t reserved_out[8])
+int peer_send_handshake(int sock,
+                        const unsigned char info_hash[20],
+                        const unsigned char peer_id[20])
 {
-    peer_handshake_t hs_out;
-    peer_handshake_init(&hs_out, info_hash, peer_id);
+    peer_handshake_t hs;
 
-    /* Send handshake */
-    if (net_send_all(sock, &hs_out, sizeof(peer_handshake_t)) < 0)
+    peer_handshake_init(&hs, info_hash, peer_id);
+
+    return net_send_all(sock, &hs, sizeof(hs));
+}
+
+int peer_check_handshake(const unsigned char *buf,
+                         const unsigned char info_hash[20],
+                         unsigned char peer_id_out[20],
+                         uint8_t reserved_out[8])
+{
+    const peer_handshake_t *hs = (const peer_handshake_t *)buf;
+
+    if (hs->pstrlen != 19)
         return -1;
-
-    /* Receive handshake */
-    peer_handshake_t hs_in;
-    if (net_recv_exact(sock, &hs_in, sizeof(peer_handshake_t)) < 0)
+    if (memcmp(hs->pstr, "BitTorrent protocol", 19) != 0)
         return -1;
-
-    /* Validate handshake */
-    if (hs_in.pstrlen != 19) return -1;
-    if (memcmp(hs_in.pstr, "BitTorrent protocol", 19) != 0) return -1;
-    if (memcmp(hs_in.info_hash, info_hash, 20) != 0) return -1;
+    if (memcmp(hs->info_hash, info_hash, 20) != 0)
+        return -1;
 
     /* Output peer ID if requested */
     if (peer_id_out)
-        memcpy(peer_id_out, hs_in.peer_id, 20);
+        memcpy(peer_id_out, hs->peer_id, 20);
 
     /* Reservados del peer: dicen que extensiones soporta (BEP-10 -> byte 5
      * bit 0x10). No se pueden ignorar: hablarle de extensiones a quien no las
      * ha anunciado es una violacion de protocolo y el peer cierra. */
     if (reserved_out)
-        memcpy(reserved_out, hs_in.reserved, 8);
+        memcpy(reserved_out, hs->reserved, 8);
 
     return 0;
 }

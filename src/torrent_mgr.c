@@ -11,6 +11,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/select.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <time.h>
@@ -308,16 +310,24 @@ static void peer_close(managed_torrent_t *mt, int peer_idx)
 {
     torrent_peer_t *p = &mt->peers[peer_idx];
 
+    /* Solo cuenta como peer activo si llego a estar listo: los que se quedan
+     * por el camino (connect o handshake fallidos) no deben descontar. */
+    if (p->state == PEER_STATE_READY && mt->active_peers > 0)
+        mt->active_peers--;
+
     if (p->sock >= 0)
         net_close(p->sock);
+
     p->sock = -1;
+    p->state = PEER_STATE_IDLE;
+    p->hs_received = 0;
+    p->ext_id_ut_pex = 0;
+    p->supports_ext = 0;
     free(p->bitfield);
     p->bitfield = NULL;
     p->bitfield_len = 0;
     p->has_bitfield = 0;
 
-    if (mt->active_peers > 0)
-        mt->active_peers--;
     if (mt->rx_peer == peer_idx)
         rx_drop(mt);
 }
@@ -552,73 +562,65 @@ static int peer_pool_add(managed_torrent_t *mt, const peer_addr_t *addr)
  * @return 1 peer nuevo conectado, 0 fallo de red, -1 nada que hacer (ya estaba
  *         conectado o la tabla de peers esta llena)
  */
-static int connect_one(managed_torrent_t *mt, const peer_addr_t *addr)
+static int peer_start_connect(managed_torrent_t *mt, const peer_addr_t *addr)
 {
     int peer_slot = -1;
-    int already = 0;
 
     /* Reutilizar el hueco de un peer caido con la misma direccion y no abrir
-     * un socket duplicado si ya esta activo. */
+     * un socket duplicado si ya esta conectando o conectado. */
     for (int j = 0; j < mt->num_peers; j++) {
         if (mt->peers[j].addr.ip == addr->ip &&
             mt->peers[j].addr.port == addr->port) {
-            if (mt->peers[j].sock >= 0)
-                already = 1;
-            else
-                peer_slot = j;
+            if (mt->peers[j].state != PEER_STATE_IDLE)
+                return 1;
+            peer_slot = j;
             break;
         }
     }
-    if (already)
-        return -1;
-    if (peer_slot < 0 && mt->num_peers >= MAX_PEERS_PER_TORRENT)
-        return -1;
 
-    int sock = net_tcp_connect_timeout(addr->ip, ntohs(addr->port),
-                                       NET_PEER_CONNECT_TIMEOUT_SEC);
-    if (sock < 0) {
-        /* Se registra la direccion: sirve para distinguir peers de IPv6
-         * (inalcanzables desde aqui) de peers caidos. */
-        ui_log("peer connect failed: %u.%u.%u.%u:%u",
-               (ntohl(addr->ip) >> 24) & 0xff,
-               (ntohl(addr->ip) >> 16) & 0xff,
-               (ntohl(addr->ip) >> 8) & 0xff,
-               ntohl(addr->ip) & 0xff,
-               ntohs(addr->port));
-        return 0;
+    if (peer_slot < 0) {
+        if (mt->num_peers >= MAX_PEERS_PER_TORRENT) {
+            /* Tabla llena: se recicla un hueco libre. Sin esto, tras 50
+             * direcciones muertas (lo normal con NAT) no se probaria ninguna
+             * mas y el torrente se quedaria clavado. */
+            for (int j = 0; j < mt->num_peers; j++) {
+                if (mt->peers[j].state == PEER_STATE_IDLE) {
+                    peer_slot = j;
+                    break;
+                }
+            }
+            if (peer_slot < 0)
+                return 1;   /* todos los huecos estan en uso: nada que hacer */
+        } else {
+            peer_slot = mt->num_peers;
+        }
     }
 
-    /* El handshake tiene su propio presupuesto: hay peers que aceptan TCP y
-     * luego se quedan callados, y con el timeout largo de E/S el panel se
-     * quedaba muerto 8 s por cada uno. */
-    net_set_timeout(sock, NET_PEER_HANDSHAKE_TIMEOUT_SEC);
-
-    uint8_t remote_id[20];
-    uint8_t peer_reserved[8];
-    if (peer_handshake(sock, mt->torrent->info_hash,
-                       mt->peer_id, remote_id, peer_reserved) < 0) {
-        net_close(sock);
+    /* Lanzar la conexion y seguir a lo nuestro: se termina de resolver en
+     * peer_step_connecting(). Aqui no se bloquea nada. */
+    int sock = net_tcp_connect_start(addr->ip, ntohs(addr->port));
+    if (sock < 0)
         return 0;
-    }
 
-    net_set_timeout(sock, NET_PEER_IO_TIMEOUT_SEC);
+    if (peer_slot == mt->num_peers)
+        mt->num_peers++;
 
-    if (peer_slot < 0)
-        peer_slot = mt->num_peers++;
     torrent_peer_t *p = &mt->peers[peer_slot];
     p->sock = sock;
     p->addr = *addr;
-    memcpy(p->peer_id, remote_id, 20);
+    p->state = PEER_STATE_CONNECTING;
+    p->deadline = get_time_sec() + NET_PEER_CONNECT_TIMEOUT_SEC;
+    p->hs_received = 0;
     p->choked = 1;
     p->am_interested = 0;
     p->last_request = 0;
     p->messages_seen = 0;
     p->last_keepalive = get_time_sec();
+    p->last_pex_sent = 0;
     p->downloaded = 0;
     p->uploaded = 0;
     p->ext_id_ut_pex = 0;
-    p->last_pex_sent = 0;
-    p->supports_ext = (peer_reserved[5] & 0x10) != 0;
+    p->supports_ext = 0;
 
     /* Bitfield del peer: se reserva ya para poder copiarlo en cuanto llegue
      * (es lo que permite pedirle solo lo que tiene). */
@@ -630,39 +632,44 @@ static int connect_one(managed_torrent_t *mt, const peer_addr_t *addr)
     }
     p->has_bitfield = 0;
 
-    mt->active_peers++;
-
-    peer_send_interested(sock);
-    /* BEP-10: el handshake extendido se manda SOLO a quien lo ha anunciado en
-     * los reservados. A un peer sin el bit extendido, un mensaje de extension
-     * (id 20) le parece una violacion del protocolo y cierra la conexion: era
-     * el motivo de que los peers desaparecieran al instante. */
-    if (p->supports_ext) {
-        peer_send_extended_handshake(sock);
-    } else {
-        ui_log("peer %d does not support the extension protocol (no PEX)",
-               peer_slot);
-    }
-
     return 1;
 }
 
-/**
- * Prueba direcciones del pool dentro de un presupuesto de tiempo.
- *
- * @param deadline       Segundos (epoch) en los que hay que parar
- * @param max_connects   Maximo de peers nuevos por ronda
- * @param failed         Salida: intentos que fallaron
- * @return peers conectados en esta ronda
- */
-static int connect_from_pool(managed_torrent_t *mt, uint64_t deadline,
-                             int max_connects, int *failed)
+/** Conexiones que aun no han terminado (connect o handshake en curso). */
+static int count_inflight(managed_torrent_t *mt)
 {
-    int made = 0;
+    int n = 0;
+
+    for (int i = 0; i < mt->num_peers; i++) {
+        if (mt->peers[i].state == PEER_STATE_CONNECTING ||
+            mt->peers[i].state == PEER_STATE_HANDSHAKING)
+            n++;
+    }
+
+    return n;
+}
+
+/**
+ * Lanza conexiones no bloqueantes contra direcciones del pool.
+ *
+ * Ya no hace falta presupuesto de tiempo: lanzar un connect no cuesta nada. El
+ * limite es cuantas conexiones puede haber en vuelo, no los segundos. Medido:
+ * de 30 candidatos solo 4 aceptan TCP, asi que probarlos rapido y en paralelo es
+ * la diferencia entre encontrar peers en segundos o en minutos.
+ *
+ * @param max_starts  Maximo de conexiones a lanzar en esta vuelta
+ * @param failed      Salida: direcciones descartadas por fallo inmediato
+ * @return conexiones lanzadas
+ */
+static int connect_from_pool(managed_torrent_t *mt, int max_starts, int *failed)
+{
+    int started = 0;
     uint64_t now = get_time_sec();
 
-    for (int i = 0; i < mt->peer_pool_count && made < max_connects; ) {
-        if (get_time_sec() >= deadline)
+    for (int i = 0; i < mt->peer_pool_count && started < max_starts; ) {
+        peer_addr_t addr;
+
+        if (count_inflight(mt) >= MAX_PEERS_INFLIGHT)
             break;
 
         if (mt->peer_pool[i].next_try > now) {
@@ -670,16 +677,15 @@ static int connect_from_pool(managed_torrent_t *mt, uint64_t deadline,
             continue;
         }
 
-        peer_addr_t addr = mt->peer_pool[i].addr;
-        int ret = connect_one(mt, &addr);
+        addr = mt->peer_pool[i].addr;
 
-        if (ret != 0) {
-            /* Conectado o descartado (ya estaba / no cabe): fuera del pool. */
+        if (peer_start_connect(mt, &addr)) {
+            /* Lanzada (o ya estaba en curso): fuera del pool. */
             mt->peer_pool[i] = mt->peer_pool[--mt->peer_pool_count];
-            if (ret == 1)
-                made++;
+            started++;
         } else {
-            /* Fallo de red: no insistir en cada vuelta */
+            /* Aqui solo fallan los rechazos inmediatos (RST); los timeouts se
+             * detectan mas tarde, en peer_step_connecting(). */
             mt->peer_pool[i].next_try = now + PEER_POOL_RETRY_SEC;
             if (failed)
                 (*failed)++;
@@ -687,7 +693,7 @@ static int connect_from_pool(managed_torrent_t *mt, uint64_t deadline,
         }
     }
 
-    return made;
+    return started;
 }
 
 /**
@@ -710,6 +716,111 @@ void torrent_mgr_on_dht_peer(const unsigned char info_hash[20],
         return;
 
     peer_pool_add(&torrents[idx], peer);
+}
+
+/**
+ * Avanza la conexion de un peer que aun no esta listo: connect y handshake, los
+ * dos por pasos y sin bloquear nada.
+ *
+ * Medido el 17-10-2026 sobre 30 candidatos: 26 no aceptan TCP y 3 de los 4 que
+ * aceptan se quedan mudos. Siendo bloqueante, cada uno de esos cuesta segundos
+ * de panel congelado; aqui cuestan cero, y por eso se pueden probar decenas a
+ * la vez.
+ */
+static void peer_step_connecting(managed_torrent_t *mt, int peer_idx)
+{
+    torrent_peer_t *p = &mt->peers[peer_idx];
+    uint64_t now = get_time_sec();
+
+    if (p->state == PEER_STATE_CONNECTING) {
+        int r = net_tcp_connect_poll(p->sock);
+
+        if (r < 0) {
+            ui_log("peer connect failed: %u.%u.%u.%u:%u",
+                   (ntohl(p->addr.ip) >> 24) & 0xff,
+                   (ntohl(p->addr.ip) >> 16) & 0xff,
+                   (ntohl(p->addr.ip) >> 8) & 0xff,
+                   ntohl(p->addr.ip) & 0xff,
+                   ntohs(p->addr.port));
+            peer_close(mt, peer_idx);
+            return;
+        }
+
+        if (r == 0) {
+            /* Sigue intentandose. Si se pasa del plazo, se descarta sin traza:
+             * son la mayoria y llenarian el log. */
+            if (now >= p->deadline)
+                peer_close(mt, peer_idx);
+            return;
+        }
+
+        if (peer_send_handshake(p->sock, mt->torrent->info_hash,
+                                mt->peer_id) < 0) {
+            peer_close(mt, peer_idx);
+            return;
+        }
+
+        p->state = PEER_STATE_HANDSHAKING;
+        p->hs_received = 0;
+        p->deadline = now + NET_PEER_HANDSHAKE_TIMEOUT_SEC;
+        return;
+    }
+
+    if (p->state != PEER_STATE_HANDSHAKING)
+        return;
+
+    /* Leer su handshake sin bloquear: casi siempre cabe en un paquete, pero
+     * puede venir troceado. */
+    while (p->hs_received < PEER_HANDSHAKE_LEN) {
+        ssize_t n = recv(p->sock, p->hs_buf + p->hs_received,
+                         (size_t)(PEER_HANDSHAKE_LEN - p->hs_received), 0);
+
+        if (n > 0) {
+            p->hs_received += (int)n;
+            continue;
+        }
+        if (n == 0) {
+            peer_close(mt, peer_idx);
+            return;
+        }
+        if (errno == EINTR)
+            continue;
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            peer_close(mt, peer_idx);
+            return;
+        }
+        break;   /* todavia no hay mas */
+    }
+
+    if (p->hs_received < PEER_HANDSHAKE_LEN) {
+        if (now >= p->deadline)
+            peer_close(mt, peer_idx);
+        return;
+    }
+
+    uint8_t peer_reserved[8];
+    if (peer_check_handshake(p->hs_buf, mt->torrent->info_hash,
+                             p->peer_id, peer_reserved) < 0) {
+        peer_close(mt, peer_idx);
+        return;
+    }
+
+    /* Ya es un peer util: se pasa a modo bloqueante con timeout, que es como se
+     * leen despues los mensajes (siempre con select por delante). */
+    net_tcp_set_blocking(p->sock);
+    net_set_timeout(p->sock, NET_PEER_IO_TIMEOUT_SEC);
+
+    p->supports_ext = (peer_reserved[5] & 0x10) != 0;
+    p->state = PEER_STATE_READY;
+    mt->active_peers++;
+
+    peer_send_interested(p->sock);
+
+    /* BEP-10: el handshake extendido se manda SOLO a quien lo ha anunciado en
+     * los reservados. A un peer sin el bit extendido, un mensaje de extension
+     * (id 20) le parece una violacion del protocolo y cierra la conexion. */
+    if (p->supports_ext)
+        peer_send_extended_handshake(p->sock);
 }
 
 /**
@@ -828,8 +939,7 @@ static int announce_to_tracker(managed_torrent_t *mt)
                 peer_pool_add(mt, &tr->peers[i]);
 
             int failed = 0;
-            int made = connect_from_pool(mt, deadline,
-                                         MAX_PEER_CONNECTS_PER_ANNOUNCE,
+            int made = connect_from_pool(mt, MAX_PEER_CONNECTS_PER_ANNOUNCE,
                                          &failed);
             connects_this_round += made;
             connects_ok += made;
@@ -842,7 +952,7 @@ static int announce_to_tracker(managed_torrent_t *mt)
         mt->error_type = TERR_NONE;
         mt->error_msg[0] = '\0';
         mt->error_code[0] = '\0';
-        ui_log("announce ok: %d tracker(s), %d peer(s) offered, %d connected "
+        ui_log("announce ok: %d tracker(s), %d peer(s) offered, %d started "
                "(%d failed, active=%d, %d tracker(s) in backoff)", contacted,
                peers_reported, connects_ok, connects_failed, mt->active_peers,
                skipped_trackers);
@@ -1093,7 +1203,7 @@ static void peer_pump(managed_torrent_t *mt)
     /* Pieza en curso cuyo peer ya no sirve: se devuelve a la cola */
     if (mt->rx_piece >= 0) {
         torrent_peer_t *serving = mt->rx_peer >= 0 ? &mt->peers[mt->rx_peer] : NULL;
-        if (!serving || serving->sock < 0 || serving->choked) {
+        if (!serving || serving->state != PEER_STATE_READY || serving->choked) {
             rx_drop(mt);
         }
     }
@@ -1109,7 +1219,8 @@ static void peer_pump(managed_torrent_t *mt)
             torrent_peer_t *peer = &mt->peers[i];
             int piece;
 
-            if (peer->sock < 0 || peer->choked || !peer->has_bitfield)
+            if (peer->state != PEER_STATE_READY || peer->choked ||
+                !peer->has_bitfield)
                 continue;
 
             piece = piece_mgr_get_next(&mt->piece_mgr, peer->bitfield,
@@ -1212,11 +1323,19 @@ int torrent_mgr_tick(void)
             }
         }
 
-        /* Process peers with non-blocking reads. Se drena todo lo disponible:
-         * un mensaje por vuelta ataba la descarga a la cadencia del bucle y
-         * dejaba bloques esperando en el socket. */
+        /* Conexiones a medias: avanzar su fase (connect y handshake) sin
+         * bloquear. Son las que en un enjambre lleno de NAT se llevan la mayor
+         * parte del trabajo y del tiempo. */
         for (int p = 0; p < mt->num_peers; p++) {
-            if (mt->peers[p].sock < 0)
+            if (mt->peers[p].state == PEER_STATE_CONNECTING ||
+                mt->peers[p].state == PEER_STATE_HANDSHAKING)
+                peer_step_connecting(mt, p);
+        }
+
+        /* Peers listos: drenar todo lo disponible. Un mensaje por vuelta ataba
+         * la descarga a la cadencia del bucle y dejaba bloques esperando. */
+        for (int p = 0; p < mt->num_peers; p++) {
+            if (mt->peers[p].state != PEER_STATE_READY)
                 continue;
 
             for (int guard = 0; guard < 64; guard++) {
@@ -1229,7 +1348,7 @@ int torrent_mgr_tick(void)
                     break;
 
                 process_peer(mt, p);
-                if (mt->peers[p].sock < 0)
+                if (mt->peers[p].state != PEER_STATE_READY)
                     break;
             }
         }
@@ -1239,7 +1358,8 @@ int torrent_mgr_tick(void)
         for (int p = 0; p < mt->num_peers; p++) {
             torrent_peer_t *peer = &mt->peers[p];
 
-            if (peer->sock < 0 || now - peer->last_keepalive < 120)
+            if (peer->state != PEER_STATE_READY ||
+                now - peer->last_keepalive < 120)
                 continue;
 
             if (peer_send_keepalive(peer->sock) < 0) {
@@ -1257,13 +1377,13 @@ int torrent_mgr_tick(void)
             unsigned char compact[6 * 64];
             int n = 0;
 
-            if (peer->sock < 0 || peer->ext_id_ut_pex == 0)
+            if (peer->state != PEER_STATE_READY || peer->ext_id_ut_pex == 0)
                 continue;
             if (peer->last_pex_sent != 0 && now - peer->last_pex_sent < 60)
                 continue;
 
             for (int q = 0; q < mt->num_peers && n < 64; q++) {
-                if (mt->peers[q].sock < 0)
+                if (mt->peers[q].state != PEER_STATE_READY)
                     continue;
                 memcpy(compact + n * 6, &mt->peers[q].addr.ip, 4);
                 memcpy(compact + n * 6 + 4, &mt->peers[q].addr.port, 2);
@@ -1278,16 +1398,13 @@ int torrent_mgr_tick(void)
                 peer->last_pex_sent = now;
         }
 
-        /* Candidatos del pool (del tracker y de PEX). Se van probando de poco
-         * en poco porque cada connect bloquea y el panel comparte el hilo. Con
-         * 10 peers conectados ya hay con quien tirar: mas solo alargaria las
-         * pausas del panel para nada. */
-        if (mt->active_peers < 10 && mt->peer_pool_count > 0 &&
-            now - mt->last_pool_connect >= 5) {
-            int failed = 0;
-
+        /* Candidatos del pool (del tracker, de PEX y de la DHT). Lanzar un
+         * connect ya no bloquea, asi que se prueban muchos de golpe: es lo que
+         * convierte minutos en segundos cuando 26 de cada 30 estan detras de NAT. */
+        if (mt->active_peers < 20 && mt->peer_pool_count > 0 &&
+            now - mt->last_pool_connect >= 2) {
             mt->last_pool_connect = now;
-            connect_from_pool(mt, now + POOL_CONNECT_BUDGET_SEC, 4, &failed);
+            connect_from_pool(mt, 16, NULL);
         }
 
         /* Pedir mas bloques: sin esto solo se pediria al recibir algo */

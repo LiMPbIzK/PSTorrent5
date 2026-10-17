@@ -83,6 +83,24 @@ int net_tcp_connect(uint32_t addr, uint16_t port);
 int net_tcp_connect_timeout(uint32_t addr, uint16_t port, int timeout_sec);
 
 /**
+ * Start a non-blocking connect. The socket stays non-blocking.
+ * @return Socket fd (connecting) on success, -1 on error
+ */
+int net_tcp_connect_start(uint32_t addr, uint16_t port);
+
+/**
+ * Check a pending non-blocking connect.
+ * @return 1 connected, 0 still trying, -1 failed
+ */
+int net_tcp_connect_poll(int sock);
+
+/**
+ * Put a socket back into blocking mode (peer messages read with timeouts).
+ * @return 0 on success, -1 on error
+ */
+int net_tcp_set_blocking(int sock);
+
+/**
  * Send all data (handles partial sends).
  * @param sock  Socket fd
  * @param data  Data to send

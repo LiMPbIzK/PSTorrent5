@@ -60,22 +60,28 @@ void peer_handshake_init(peer_handshake_t *hs,
                          const unsigned char peer_id[20]);
 
 /**
- * Perform a BitTorrent handshake with a peer.
- * @param sock      Connected socket
- * @param info_hash 20-byte info hash
- * @param peer_id   20-byte local peer ID
- * @param peer_id_out Output buffer for remote peer's ID (20 bytes), or NULL
- * @param reserved_out Output: los 8 bytes de reservados del peer (o NULL).
- *                     Hace falta para saber si soporta el protocolo de extension
- *                     (BEP-10): mandarle un mensaje de extension a quien no lo
- *                     ha anunciado es una violacion y el peer cierra.
+ * Build and send our handshake (68 bytes, cabe en el buffer del socket: nunca
+ * bloquea aunque el socket sea no bloqueante).
  * @return 0 on success, -1 on error
  */
-int peer_handshake(int sock,
-                   const unsigned char info_hash[20],
-                   const unsigned char peer_id[20],
-                   unsigned char peer_id_out[20],
-                   uint8_t reserved_out[8]);
+int peer_send_handshake(int sock,
+                        const unsigned char info_hash[20],
+                        const unsigned char peer_id[20]);
+
+/**
+ * Validate a 68-byte handshake received from a peer.
+ * @param buf          68 bytes recibidos
+ * @param info_hash    Nuestro info hash (tiene que coincidir)
+ * @param peer_id_out  Salida: id del peer (puede ser NULL)
+ * @param reserved_out Salida: 8 bytes de reservados, para saber si soporta el
+ *                     protocolo de extension (BEP-10). No se puede hablar de
+ *                     extensiones a quien no las anuncia.
+ * @return 0 si es valido, -1 si no
+ */
+int peer_check_handshake(const unsigned char *buf,
+                         const unsigned char info_hash[20],
+                         unsigned char peer_id_out[20],
+                         uint8_t reserved_out[8]);
 
 /**
  * Send an "interested" message.

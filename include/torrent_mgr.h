@@ -69,8 +69,14 @@
 /** Cuanto se espera antes de reintentar una direccion que fallo, en segundos. */
 #define PEER_POOL_RETRY_SEC 300
 
-/** Presupuesto (segundos) de una ronda de conexiones fuera del announce. */
-#define POOL_CONNECT_BUDGET_SEC 3
+/**
+ * Peers intentando conectar a la vez, como maximo.
+ *
+ * Cada intento es un socket y un hueco, y la mayoria muere (NAT). Tener muchos
+ * en vuelo es justo lo que hace que los pocos que responden aparezcan en
+ * segundos en vez de en minutos.
+ */
+#define MAX_PEERS_INFLIGHT 32
 
 /**
  * Torrent state.
@@ -96,10 +102,28 @@ typedef enum {
 } torrent_error_t;
 
 /**
+ * Estado de la conexion con un peer.
+ *
+ * connect() y el handshake van sin bloquear y por pasos, porque la muestra real
+ * medida dice que de 30 candidatos solo 4 aceptan TCP y 1 completa el handshake:
+ * probarlos en serie cuesta minutos y ademas congela el panel, que comparte hilo.
+ */
+typedef enum {
+    PEER_STATE_IDLE = 0,       // Hueco libre
+    PEER_STATE_CONNECTING,     // connect() lanzado, esperando
+    PEER_STATE_HANDSHAKING,    // conectado, nuestro handshake enviado
+    PEER_STATE_READY           // handshake hecho: se le pueden pedir piezas
+} peer_state_t;
+
+/**
  * A peer connection.
  */
 typedef struct {
     int       sock;
+    peer_state_t state;
+    uint64_t  deadline;        // Limite de la fase actual (connect o handshake)
+    unsigned char hs_buf[68];  // Handshake del peer, que llega por trozos
+    int       hs_received;
     peer_addr_t addr;
     uint8_t   peer_id[20];
     int       choked;

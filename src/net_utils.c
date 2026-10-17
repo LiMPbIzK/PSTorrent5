@@ -54,6 +54,69 @@ int net_resolve(const char *hostname, uint32_t *addr_out)
     return 0;
 }
 
+int net_tcp_connect_start(uint32_t addr, uint16_t port)
+{
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in saddr;
+    int flags;
+
+    if (sock < 0) return -1;
+
+    memset(&saddr, 0, sizeof(saddr));
+    saddr.sin_family = AF_INET;
+    saddr.sin_addr.s_addr = addr;
+    saddr.sin_port = htons(port);
+
+    /* Se queda en no bloqueante: el que llama va preguntando con
+     * net_tcp_connect_poll(). Asi se pueden tener decenas de conexiones
+     * intentandose a la vez sin que el panel web (mismo hilo) se entere. */
+    flags = fcntl(sock, F_GETFL, 0);
+    if (flags < 0 || fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0) {
+        close(sock);
+        return -1;
+    }
+
+    if (connect(sock, (struct sockaddr *)&saddr, sizeof(saddr)) < 0 &&
+        errno != EINPROGRESS) {
+        close(sock);
+        return -1;
+    }
+
+    return sock;
+}
+
+int net_tcp_connect_poll(int sock)
+{
+    fd_set writefds;
+    struct timeval tv = {0, 0};
+    int so_error = 0;
+    socklen_t so_len = sizeof(so_error);
+
+    if (sock < 0) return -1;
+
+    FD_ZERO(&writefds);
+    FD_SET(sock, &writefds);
+
+    if (select(sock + 1, NULL, &writefds, NULL, &tv) <= 0)
+        return 0;   /* sigue intentandose */
+
+    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &so_error, &so_len) < 0 ||
+        so_error != 0)
+        return -1;
+
+    return 1;
+}
+
+int net_tcp_set_blocking(int sock)
+{
+    int flags = fcntl(sock, F_GETFL, 0);
+
+    if (flags < 0) return -1;
+    if (fcntl(sock, F_SETFL, flags & ~O_NONBLOCK) < 0) return -1;
+
+    return 0;
+}
+
 int net_tcp_connect_timeout(uint32_t addr, uint16_t port, int timeout_sec)
 {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
