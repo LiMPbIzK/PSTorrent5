@@ -86,7 +86,7 @@
  * entonces se verifica el SHA-1 y se escribe. Cada ranura la sirve un peer
  * distinto, que es de donde sale el paralelismo.
  */
-#define PEER_INFLIGHT_MAX 4
+#define PEER_INFLIGHT_MAX 16
 
 typedef struct {
     unsigned char *buf;           // Buffer de la pieza (se reserva al usarla)
@@ -204,6 +204,7 @@ typedef struct {
     // Stats
     uint64_t  downloaded;
     uint64_t  uploaded;
+    uint64_t  bytes_in;       // Bytes recibidos (sin verificar), para la velocidad
     uint64_t  total_size;
     int       tracker_announces;
     int       tracker_interval;
@@ -214,7 +215,7 @@ typedef struct {
     // Timing
     uint64_t  last_announce_time;
     uint64_t  last_speed_calc;
-    uint64_t  last_downloaded;
+    uint64_t  last_speed_bytes;
     uint64_t  last_uploaded;
     uint64_t  start_time;
 

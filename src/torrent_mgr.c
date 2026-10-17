@@ -426,14 +426,15 @@ int torrent_mgr_start(int index)
                    mt->torrent->total_size,
                    mt->torrent->pieces);
 
-    /* Ranuras de descarga: cuantas piezas a la vez, segun lo que ocupa una.
-     * Con piezas de 256 KB se usan las cuatro; con piezas de 16 MB, una sola y
-     * no se reservan 64 MB de RAM. Los buffers se reservan al usarse. */
+    /* Ranuras de descarga: el objetivo es tener muchas piezas en vuelo a la vez
+     * (es la palanca de velocidad: con 27 peers conectados y 4 ranuras solo
+     * trabajan 4), pero con un presupuesto de memoria. Este torrent tiene piezas
+     * de 256 KB, asi que salen 16 ranuras y 4 MB de buffers. */
     rx_teardown(mt);
-    mt->rx_slots = PEER_INFLIGHT_MAX;
-    if (mt->torrent->piece_length > 1024 * 1024)
-        mt->rx_slots = 2;
-    if (mt->torrent->piece_length > 4 * 1024 * 1024)
+    mt->rx_slots = (int)((8u * 1024u * 1024u) / (size_t)mt->torrent->piece_length);
+    if (mt->rx_slots > PEER_INFLIGHT_MAX)
+        mt->rx_slots = PEER_INFLIGHT_MAX;
+    if (mt->rx_slots < 1)
         mt->rx_slots = 1;
     rx_drop_all(mt);
 
@@ -453,7 +454,7 @@ int torrent_mgr_start(int index)
     mt->start_time = get_time_sec();
     mt->last_announce_time = 0;
     mt->last_speed_calc = get_time_sec();
-    mt->last_downloaded = mt->downloaded;
+    mt->last_speed_bytes = mt->bytes_in;
     mt->last_uploaded = mt->uploaded;
 
     ui_log("start #%d ok: state=downloading, %s", index,
@@ -971,7 +972,7 @@ static int announce_to_tracker(managed_torrent_t *mt)
         tracker_response_free(tr);
     }
 
-    if (mt->active_peers > 0) {
+    if (mt->active_peers > 0 || count_inflight(mt) > 0) {
         mt->error_type = TERR_NONE;
         mt->error_msg[0] = '\0';
         mt->error_code[0] = '\0';
@@ -1101,9 +1102,13 @@ static void process_peer(managed_torrent_t *mt, int peer_idx)
         return;
 
     case PEER_MSG_UNCHOKE:
+        /* Solo se traza el cambio: hay clientes que mandan unchoke en cada
+         * vuelta y llenaban el log con la misma linea. */
+        if (p->choked) {
+            ui_log("peer %d unchoked us%s", peer_idx,
+                   p->has_bitfield ? "" : " (bitfield pending)");
+        }
         p->choked = 0;
-        ui_log("peer %d unchoked us%s", peer_idx,
-               p->has_bitfield ? "" : " (bitfield pending)");
         return;
 
     case PEER_MSG_BITFIELD: {
@@ -1186,6 +1191,7 @@ static void process_peer(managed_torrent_t *mt, int peer_idx)
         fl->have += msg.data_len;
         fl->last_activity = get_time_sec();
         p->downloaded += msg.data_len;
+        mt->bytes_in += msg.data_len;
         mt->rx_blocks++;
 
         if (mt->rx_blocks <= 3 || mt->rx_blocks % 200 == 0) {
@@ -1366,14 +1372,16 @@ int torrent_mgr_tick(void)
         /* Update progress */
         mt->progress = piece_mgr_progress(&mt->piece_mgr);
 
-        /* Calculate speed */
+        /* Calculate speed. Se mide con los bytes RECIBIDOS, no con los que ya
+         * han completado pieza: si no, la velocidad sale a saltos de 0 KB/s y
+         * 128 KB/s aunque se este bajando de forma continua. */
         if (now > mt->last_speed_calc) {
             uint64_t elapsed = now - mt->last_speed_calc;
             if (elapsed >= 2) {
-                mt->speed_down = (mt->downloaded - mt->last_downloaded) / elapsed;
+                mt->speed_down = (mt->bytes_in - mt->last_speed_bytes) / elapsed;
                 mt->speed_up = (mt->uploaded - mt->last_uploaded) / elapsed;
                 mt->last_speed_calc = now;
-                mt->last_downloaded = mt->downloaded;
+                mt->last_speed_bytes = mt->bytes_in;
                 mt->last_uploaded = mt->uploaded;
             }
         }
@@ -1474,7 +1482,7 @@ int torrent_mgr_tick(void)
         /* Candidatos del pool (del tracker, de PEX y de la DHT). Lanzar un
          * connect ya no bloquea, asi que se prueban muchos de golpe: es lo que
          * convierte minutos en segundos cuando 26 de cada 30 estan detras de NAT. */
-        if (mt->active_peers < 20 && mt->peer_pool_count > 0 &&
+        if (mt->active_peers < 30 && mt->peer_pool_count > 0 &&
             now - mt->last_pool_connect >= 2) {
             mt->last_pool_connect = now;
             connect_from_pool(mt, 16, NULL);
