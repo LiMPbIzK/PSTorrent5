@@ -54,7 +54,7 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 
 ## Hito 1: Configuración persistente, rutas y reanudación
 
-- [ ] **E/S de red totalmente no bloqueante** (obligatorio): integrar los sockets de peers y de tracker en el `select()` del bucle principal, con estado por conexión, en lugar de `send`/`recv` bloqueantes. Elimina la congelación del panel de raíz (hoy mitigada con timeouts acotados)
+- [ ] **E/S de red totalmente no bloqueante** (obligatorio): integrar los sockets de peers y de tracker en el `select()` del bucle principal, con estado por conexión, en lugar de `send`/`recv` bloqueantes. Elimina la congelación del panel de raíz (hoy mitigada con timeouts acotados). **Ahora es además el cuello de botella de rendimiento**: medido el 17-10-2026, de 30 peers solo 4 aceptan TCP y 1 completa el handshake, así que hay que probar decenas de candidatos por vuelta; en serie con `connect` bloqueante se tardan minutos en los 5 que sí responden
 - [ ] Reducir el `gethostbyname()` bloqueante del resolver (caché + límite, o resolver asíncrono)
 - [ ] `src/config/`: config persistente en el directorio de datos del payload (JSON)
 - [ ] Ajustes: ruta de descarga por defecto, extraer automáticamente, borrar comprimido, contraseñas por torrent, autenticación del panel
