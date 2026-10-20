@@ -17,7 +17,7 @@
 /**
  * Maximum peers per torrent.
  */
-#define MAX_PEERS_PER_TORRENT 50
+#define MAX_PEERS_PER_TORRENT 32
 
 /**
  * Maximum trackers whose health is remembered per torrent.

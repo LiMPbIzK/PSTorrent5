@@ -657,8 +657,17 @@ int main(void)
             break;
         }
 
-        /* Tick torrent manager */
-        torrent_mgr_tick();
+        /* Tick torrent manager. Se mide lo que tarda: si se va de madre, el
+         * panel web (mismo hilo) deja de responder y hay que saberlo por el log
+         * en vez de por el usuario. */
+        {
+            uint64_t tick_start = get_time_ms();
+            torrent_mgr_tick();
+            uint64_t tick_ms = get_time_ms() - tick_start;
+            if (tick_ms > 1000)
+                ui_log("WARNING: torrent tick took %llu ms (panel frozen)",
+                       (unsigned long long)tick_ms);
+        }
 
         /* DHT: descubrimiento de peers sin tracker. Nunca bloquea. */
         dht_tick();

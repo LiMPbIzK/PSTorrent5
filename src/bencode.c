@@ -78,6 +78,12 @@ static unsigned char *parse_string(parse_state_t *st, size_t *len_out)
 
     while (st->pos < st->len && st->data[st->pos] >= '0' &&
            st->data[st->pos] <= '9') {
+        /* Un digito de mas y el tamaño se desborda: 'slen * 10' da la vuelta y
+         * el limite de abajo se cumple por casualidad, con lo que se reserva
+         * memoria absurda y se copia fuera del buffer. Una cadena nunca puede
+         * ser mayor que el mensaje entero. */
+        if (slen > st->len)
+            return NULL;
         slen = slen * 10 + (st->data[st->pos++] - '0');
     }
 

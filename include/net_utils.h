@@ -34,6 +34,19 @@
 #define NET_PEER_IO_TIMEOUT_SEC         8
 
 /**
+ * Espera maxima para completar UN mensaje de un peer, en segundos.
+ *
+ * Critico: con 0, `SO_RCVTIMEO` queda a cero, que en FreeBSD y Linux significa
+ * **sin timeout**, y una lectura a medias de un mensaje se queda colgada para
+ * siempre. Eso congela el hilo entero (el panel web incluido). Medido en consola:
+ * con 40 peers y trafico de PEX el payload se quedo clavado y hubo que relanzarlo.
+ *
+ * Con 2 s, un mensaje legitimo (el bloque mas grande son 16 KB) llega de sobra y
+ * un peer atascado cuesta como mucho 2 s antes de cerrarlo.
+ */
+#define NET_PEER_MSG_TIMEOUT_SEC        2
+
+/**
  * Espera de un tracker UDP (BEP-15), por peticion: hay dos (connect y announce).
  *
  * Los publicos contestan en decimas de segundo, asi que 3 s es de sobra y

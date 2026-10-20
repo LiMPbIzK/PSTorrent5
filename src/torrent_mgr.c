@@ -1087,11 +1087,17 @@ static void process_peer(managed_torrent_t *mt, int peer_idx)
     msg.bitfield = p->bitfield;
     msg.bitfield_size = p->bitfield_len;
 
-    ret = peer_recv_message(p->sock, &msg, block_buf, sizeof(block_buf), 0);
+    /* Timeout de verdad (nunca 0: en FreeBSD 0 es "sin limite" y una lectura a
+     * medias cuelga el hilo principal, que es el del panel web). */
+    ret = peer_recv_message(p->sock, &msg, block_buf, sizeof(block_buf),
+                            NET_PEER_MSG_TIMEOUT_SEC);
 
     if (ret < 0) {
-        ui_log("peer %d disconnected (last msg id %u, errno %d '%s')",
-               peer_idx, (unsigned)msg.msg_id, errno, strerror(errno));
+        int stalled = (errno == EAGAIN || errno == EWOULDBLOCK);
+
+        ui_log("peer %d %s (last msg id %u, errno %d '%s')", peer_idx,
+               stalled ? "stalled mid-message" : "disconnected",
+               (unsigned)msg.msg_id, errno, strerror(errno));
         peer_close(mt, peer_idx);
         return;
     }
