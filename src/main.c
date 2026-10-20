@@ -404,8 +404,13 @@ static http_response_t *handle_api_action(const http_request_t *req)
         if (torrent_mgr_start(id) < 0)
             return torrent_start_error_response(id, 1);
 
-        return http_response_new(200, "application/json",
-                                 "{\"success\":true}", 17);
+        /* strlen y no un numero a mano: aqui puse 17 para una cadena de 16 y el
+         * byte de mas era el NUL, con lo que el panel fallaba al parsear el JSON. */
+        {
+            static const char ok_body[] = "{\"success\":true}";
+            return http_response_new(200, "application/json", ok_body,
+                                     sizeof(ok_body) - 1);
+        }
     }
 
     int result = -1;
