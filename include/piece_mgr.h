@@ -99,6 +99,18 @@ void piece_mgr_failed(piece_mgr_t *pm, size_t index);
 void piece_mgr_skip(piece_mgr_t *pm, size_t index);
 
 /**
+ * Dar por buena una pieza sin verificar (reanudacion).
+ *
+ * Se usa al recuperar el estado guardado: el bitfield dice que estaba completa.
+ * La verificacion real se hace despues, en segundo plano, y si no cuadra se
+ * desmarca con piece_mgr_unmark() y se vuelve a descargar.
+ */
+void piece_mgr_restore(piece_mgr_t *pm, size_t index);
+
+/** Desmarcar una pieza completa (la verificacion ha fallado). */
+void piece_mgr_unmark(piece_mgr_t *pm, size_t index);
+
+/**
  * Check if all pieces are downloaded.
  */
 int piece_mgr_is_done(const piece_mgr_t *pm);

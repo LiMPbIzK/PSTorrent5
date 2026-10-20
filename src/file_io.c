@@ -68,7 +68,7 @@ int file_writer_init(file_writer_t *fw, torrent_t *torrent,
             return -1;
         }
 
-        fw->fd = open(full_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        fw->fd = open(full_path, O_WRONLY | O_CREAT, 0644);
         if (fw->fd < 0) {
             int saved_errno = errno;
             free(fw->base_path);
@@ -164,8 +164,110 @@ int file_writer_write_piece(file_writer_t *fw,
     return 0;
 }
 
-void file_writer_finish(file_writer_t *fw)
+/**
+ * Leer una pieza del disco (para verificar lo ya descargado al reanudar).
+ *
+ * Es el espejo de file_writer_write_piece(), incluida la seleccion de ficheros:
+ * si la pieza toca un fichero no elegido, sus bytes no estan en disco y la pieza
+ * no se puede verificar.
+ *
+ * @return 0 leida, -1 error o falta el fichero, -2 no verificable (toca un
+ *         fichero no elegido: se deja como estaba)
+ */
+int file_writer_read_piece(file_writer_t *fw, unsigned char *data, size_t len,
+                           size_t piece_index)
 {
+    int64_t piece_start;
+    int64_t piece_end;
+    int64_t file_offset = 0;
+    size_t data_offset = 0;
+
+    if (!fw || !data || !fw->torrent) return -1;
+
+    piece_start = (int64_t)piece_index * fw->torrent->piece_length;
+    piece_end = piece_start + (int64_t)len;
+
+    if (!fw->multi_file) {
+        char full_path[1024];
+        const char *relative_path = fw->torrent->file_name
+                                  ? fw->torrent->file_name : fw->torrent->name;
+        int n = snprintf(full_path, sizeof(full_path), "%s/%s",
+                         fw->base_path, relative_path);
+        int fd;
+        size_t got = 0;
+
+        if (n < 0 || (size_t)n >= sizeof(full_path)) return -1;
+
+        fd = open(full_path, O_RDONLY);
+        if (fd < 0) return -1;
+        if (lseek(fd, (off_t)piece_start, SEEK_SET) < 0) {
+            close(fd);
+            return -1;
+        }
+        while (got < len) {
+            ssize_t r = read(fd, data + got, len - got);
+
+            if (r <= 0) {
+                close(fd);
+                return -1;   /* el fichero es mas corto de lo que dice el estado */
+            }
+            got += (size_t)r;
+        }
+        close(fd);
+        return 0;
+    }
+
+    for (size_t i = 0; i < fw->torrent->num_files && data_offset < len; i++) {
+        int64_t file_start = file_offset;
+        int64_t file_end = file_offset + fw->torrent->files[i].length;
+
+        if (piece_start < file_end && piece_end > file_start) {
+            int64_t read_start = (piece_start > file_start) ? piece_start - file_start : 0;
+            int64_t read_end = (piece_end < file_end) ? piece_end - file_start
+                                                      : fw->torrent->files[i].length;
+            size_t read_len = (size_t)(read_end - read_start);
+
+            if (read_len > 0) {
+                if (fw->file_selected && !fw->file_selected[i])
+                    return -2;   /* esa parte no esta en disco: no verificable */
+
+                {
+                    char full_path[1024];
+                    int n = snprintf(full_path, sizeof(full_path), "%s/%s",
+                                     fw->base_path, fw->torrent->files[i].path);
+                    int fd;
+                    size_t got = 0;
+
+                    if (n < 0 || (size_t)n >= sizeof(full_path)) return -1;
+                    fd = open(full_path, O_RDONLY);
+                    if (fd < 0) return -1;
+                    if (lseek(fd, (off_t)read_start, SEEK_SET) < 0) {
+                        close(fd);
+                        return -1;
+                    }
+                    while (got < read_len) {
+                        ssize_t r = read(fd, data + data_offset + got, read_len - got);
+
+                        if (r <= 0) {
+                            close(fd);
+                            return -1;
+                        }
+                        got += (size_t)r;
+                    }
+                    close(fd);
+                }
+
+                data_offset += read_len;
+            }
+        }
+
+        file_offset = file_end;
+    }
+
+    return data_offset == len ? 0 : -1;
+}
+
+void file_writer_finish(file_writer_t *fw){
     if (!fw) return;
 
     if (fw->fd >= 0) {

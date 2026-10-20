@@ -205,6 +205,14 @@ typedef struct {
     uint8_t         *file_selected;
     int64_t          selected_size;   // Bytes que suman los ficheros elegidos
 
+    /* Reanudacion: bitfield recuperado del disco (se aplica al arrancar), pieza
+     * por la que va la verificacion en segundo plano (-1 = sin verificar) y su
+     * buffer de lectura. */
+    unsigned char   *restore_pieces;
+    int              verify_next;
+    unsigned char   *verify_buf;
+    uint64_t         last_state_save;
+
     /* Direcciones candidatas (del tracker y, sobre todo, de ut_pex). */
     struct {
         peer_addr_t addr;
@@ -344,6 +352,12 @@ int torrent_mgr_find(const unsigned char info_hash[20]);
  * @return Number of active torrents being processed
  */
 int torrent_mgr_tick(void);
+
+/**
+ * Recupera los torrents guardados en disco (estado + metainfo) y reanuda los que
+ * estaban descargando. Se llama una vez al arrancar, antes del bucle principal.
+ */
+void torrent_mgr_restore_state(void);
 
 /**
  * Callback que la DHT llama al encontrar un peer (se registra en dht_init).

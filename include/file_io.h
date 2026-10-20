@@ -57,6 +57,13 @@ int file_writer_write_piece(file_writer_t *fw,
                             size_t piece_index);
 
 /**
+ * Read a piece back from disk (para verificar al reanudar).
+ * @return 0 leida, -1 error/falta, -2 no verificable (toca un fichero no elegido)
+ */
+int file_writer_read_piece(file_writer_t *fw, unsigned char *data, size_t len,
+                           size_t piece_index);
+
+/**
  * Finalize and close all files.
  */
 void file_writer_finish(file_writer_t *fw);

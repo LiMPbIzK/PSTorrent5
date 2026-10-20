@@ -61,7 +61,8 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 - [ ] Validación de rutas libres (absoluta, sin `..`, sin caracteres de control) y creación de `<destino>/torrents/`
 - [ ] `GET /api/config` y `POST /api/config`
 - [ ] UI de ajustes en el panel + explorador de carpetas
-- [ ] **Reanudación:** persistir piezas completadas + verificación parcial al reabrir un torrent
+- [x] **Reanudación**: estado en disco en el mismo directorio que el log (`<dir>/torrents/`): `<hash>.torrent` (el metainfo original) y `<hash>.state` (cabecera empaquetada + selección de ficheros + bitfield de piezas). Se guarda cada 10 s mientras descarga, al parar y al cerrar; se borra al quitar el torrent. Al arrancar se recupera la lista, se aplica el bitfield como completo y **se verifica en segundo plano** (100 ms por vuelta): una pieza corrupta se desmarca y se vuelve a bajar. Arreglado de paso que `file_writer_init` abría el fichero con `O_TRUNC`, lo que borraba lo descargado en cada arranque
+- [ ] **Topes de otro tamaño**: para reutilizar un fichero que ya está en disco pero sin estado (por ejemplo, de una sesión anterior a esta función) haría falta un "revisar archivos existentes" que hashee el fichero completo
 - [ ] Detección de espacio libre en el destino (y vía `GET /api/v1/storage` de ShadowMount+ si está disponible)
 
 ---

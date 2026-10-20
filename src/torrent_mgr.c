@@ -5,6 +5,7 @@
 #include "bencode.h"
 #include "version.h"
 #include "dht.h"
+#include "log.h"
 #include "ui.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,7 +14,9 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <dirent.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <time.h>
 #include <stdarg.h>
@@ -23,6 +26,10 @@
  */
 static managed_torrent_t torrents[MAX_TORRENTS];
 static int num_torrents = 0;
+
+/* Estado en disco (definido mas abajo). */
+static void state_write(managed_torrent_t *mt);
+static void state_save_torrent(int idx, const unsigned char *data, size_t len);
 
 static int ensure_directory_tree(const char *path)
 {
@@ -167,8 +174,20 @@ int torrent_mgr_add_raw(const unsigned char *data, size_t data_len,
                         const char *save_path)
 {
     torrent_t *t = torrent_parse(data, data_len);
+    int idx;
+
     if (!t) return -1;
-    return torrent_mgr_add(t, save_path, 0, NULL);
+
+    idx = torrent_mgr_add(t, save_path, 0, NULL);
+    if (idx < 0) {
+        torrent_free(t);
+        return -1;
+    }
+
+    /* Guardar el metainfo: sin el no se puede reanudar tras reiniciar. */
+    state_save_torrent(idx, data, data_len);
+
+    return idx;
 }
 
 int torrent_mgr_add_magnet(const char *magnet_uri, const char *save_path)
@@ -367,6 +386,321 @@ static void peer_close(managed_torrent_t *mt, int peer_idx)
         rx_drop_peer(mt, peer_idx);
 }
 
+/* ---------------------------------------------------- estado en disco ---- */
+
+/**
+ * Estado en disco, para reanudar despues de reiniciar el payload.
+ *
+ * Un fichero binario por torrent en <directorio del log>/torrents/:
+ *   <hash>.torrent   el metainfo original, tal cual se subio
+ *   <hash>.state     cabecera + seleccion de ficheros + bitfield de piezas
+ *
+ * Binario y no JSON a proposito: el bitfield son miles de bytes y asi no hay
+ * nada que escapar ni que interpretar.
+ */
+typedef struct {
+    char     magic[8];       /* "PST5STA1" */
+    uint8_t  torrent_state;  /* 0 parado, 1 descargando, 2 terminado */
+    uint8_t  flags;          /* bit0: hay seleccion de ficheros */
+    uint16_t reserved;
+    uint32_t num_pieces;
+    uint32_t num_files;
+    char     save_path[512];
+} __attribute__((packed)) state_header_t;
+
+/** Directorio de estado: el mismo del log (que ya esta creado y es escribible). */
+static const char *state_dir(void)
+{
+    static char dir[600];
+    static int ready = 0;
+
+    if (!ready) {
+        const char *log = log_path();
+        char *slash;
+
+        snprintf(dir, sizeof(dir), "%s",
+                 (log && log[0]) ? log : "/tmp/pstorrent5.log");
+        slash = strrchr(dir, '/');
+        if (slash)
+            *slash = '\0';
+        else
+            snprintf(dir, sizeof(dir), "/tmp");
+
+        if (strlen(dir) + 10 < sizeof(dir))
+            strcat(dir, "/torrents");
+
+        mkdir(dir, 0777);
+        ready = 1;
+    }
+
+    return dir;
+}
+
+/** Guarda cabecera + seleccion + bitfield de un torrent. */
+static void state_write(managed_torrent_t *mt)
+{
+    char path[700];
+    state_header_t hdr;
+    int fd;
+
+    if (!mt || !mt->torrent || mt->is_magnet)
+        return;
+
+    snprintf(path, sizeof(path), "%s/%s.state", state_dir(), mt->id);
+
+    memset(&hdr, 0, sizeof(hdr));
+    memcpy(hdr.magic, "PST5STA1", 8);
+    hdr.torrent_state = (uint8_t)(mt->state == TORRENT_DOWNLOADING ? 1 :
+                                  (mt->state == TORRENT_DONE ? 2 : 0));
+    hdr.flags = (mt->file_selected && mt->torrent->num_files > 0) ? 1 : 0;
+    hdr.num_pieces = (uint32_t)mt->torrent->num_pieces;
+    hdr.num_files = (uint32_t)mt->torrent->num_files;
+    snprintf(hdr.save_path, sizeof(hdr.save_path), "%s", mt->save_path);
+
+    fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        ui_log("state: could not write %s", path);
+        return;
+    }
+
+    if (write(fd, &hdr, sizeof(hdr)) != (ssize_t)sizeof(hdr)) {
+        close(fd);
+        return;
+    }
+
+    if (hdr.flags) {
+        size_t sel_len = ((size_t)hdr.num_files + 7) / 8;
+        unsigned char *sel = calloc(sel_len, 1);
+
+        if (sel) {
+            for (uint32_t i = 0; i < hdr.num_files; i++) {
+                if (mt->file_selected[i])
+                    sel[i / 8] |= (unsigned char)(1 << (7 - (i % 8)));
+            }
+            if (write(fd, sel, sel_len) != (ssize_t)sel_len) {
+                free(sel);
+                close(fd);
+                return;
+            }
+            free(sel);
+        }
+    }
+
+    if (mt->piece_mgr.bitfield && mt->piece_mgr.bitfield_len > 0) {
+        size_t bf_len = ((size_t)hdr.num_pieces + 7) / 8;
+
+        if (bf_len > mt->piece_mgr.bitfield_len)
+            bf_len = mt->piece_mgr.bitfield_len;
+
+        if (write(fd, mt->piece_mgr.bitfield, bf_len) != (ssize_t)bf_len) {
+            close(fd);
+            return;
+        }
+    }
+
+    close(fd);
+}
+
+/** Guarda el metainfo (al anadir) y el estado inicial. */
+static void state_save_torrent(int idx, const unsigned char *data, size_t len)
+{
+    char path[700];
+    int fd;
+
+    if (idx < 0 || idx >= num_torrents || !data || len == 0)
+        return;
+
+    snprintf(path, sizeof(path), "%s/%s.torrent", state_dir(), torrents[idx].id);
+
+    fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        ui_log("state: could not write %s", path);
+        return;
+    }
+
+    if (write(fd, data, len) != (ssize_t)len)
+        ui_log("state: short write on %s", path);
+
+    close(fd);
+    state_write(&torrents[idx]);
+}
+
+/**
+ * Verifica una tanda de piezas recuperadas del estado guardado.
+ *
+ * El bitfield decia que estaban completas, pero el disco puede haber cambiado o
+ * el estado puede venir de un corte a mitad. Se leen, se comprueba el SHA-1 y
+ * si no cuadra la pieza se desmarca y se vuelve a descargar.
+ */
+static void verify_step(managed_torrent_t *mt)
+{
+    uint64_t start = get_time_ms_local();
+
+    if (!mt->torrent)
+        return;
+
+    if (!mt->verify_buf) {
+        mt->verify_buf = malloc((size_t)mt->torrent->piece_length);
+        if (!mt->verify_buf) {
+            mt->verify_next = -1;
+            return;
+        }
+    }
+
+    while (mt->verify_next >= 0 &&
+           (size_t)mt->verify_next < mt->torrent->num_pieces &&
+           get_time_ms_local() - start < 100) {
+        size_t p = (size_t)mt->verify_next;
+        uint32_t len = (uint32_t)mt->torrent->piece_length;
+
+        if (p == mt->torrent->num_pieces - 1) {
+            len = (uint32_t)(mt->torrent->total_size -
+                             (int64_t)p * mt->torrent->piece_length);
+        }
+
+        if (mt->piece_mgr.pieces[p].state == PIECE_COMPLETE) {
+            int rc = file_writer_read_piece(&mt->file_writer, mt->verify_buf, len, p);
+
+            if (rc == 0) {
+                /* Desmarcar primero: piece_mgr_complete() no descuenta el
+                 * contador si el hash no cuadra. */
+                piece_mgr_unmark(&mt->piece_mgr, p);
+                if (piece_mgr_complete(&mt->piece_mgr, p, mt->verify_buf, len) != 0)
+                    ui_log("verify: piece %zu is corrupt, downloading again", p);
+            } else if (rc == -1) {
+                piece_mgr_unmark(&mt->piece_mgr, p);
+            }
+            /* rc == -2: toca un fichero no elegido, no se puede verificar. */
+        }
+
+        mt->verify_next++;
+    }
+
+    if ((size_t)mt->verify_next >= mt->torrent->num_pieces) {
+        free(mt->verify_buf);
+        mt->verify_buf = NULL;
+        mt->verify_next = -1;
+        ui_log("verify: done, %zu of %zu pieces valid",
+               mt->piece_mgr.num_complete, mt->torrent->num_pieces);
+    }
+}
+
+/** Recupera un torrent desde su fichero de estado. */
+static void state_restore_one(const char *name)
+{
+    char path[700];
+    char tpath[700];
+    char hash[64];
+    state_header_t hdr;
+    torrent_t *torrent;
+    managed_torrent_t *mt;
+    char *dot;
+    int idx;
+    int fd;
+
+    snprintf(hash, sizeof(hash), "%s", name);
+    dot = strrchr(hash, '.');
+    if (dot)
+        *dot = '\0';
+
+    snprintf(path, sizeof(path), "%s/%s", state_dir(), name);
+    fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return;
+
+    if (read(fd, &hdr, sizeof(hdr)) != (ssize_t)sizeof(hdr) ||
+        memcmp(hdr.magic, "PST5STA1", 8) != 0) {
+        ui_log("restore: ignoring %s (bad header)", name);
+        close(fd);
+        return;
+    }
+
+    snprintf(tpath, sizeof(tpath), "%s/%s.torrent", state_dir(), hash);
+    torrent = torrent_parse_file(tpath);
+    if (!torrent) {
+        ui_log("restore: missing metainfo %s", tpath);
+        close(fd);
+        return;
+    }
+
+    idx = torrent_mgr_add(torrent, hdr.save_path, 0, NULL);
+    if (idx < 0) {
+        torrent_free(torrent);
+        close(fd);
+        return;
+    }
+
+    mt = &torrents[idx];
+
+    if (hdr.flags && hdr.num_files == torrent->num_files && torrent->num_files > 0) {
+        size_t sel_len = ((size_t)hdr.num_files + 7) / 8;
+        unsigned char *sel = malloc(sel_len);
+
+        if (sel && read(fd, sel, sel_len) == (ssize_t)sel_len) {
+            unsigned char *flags = calloc(torrent->num_files, 1);
+
+            if (flags) {
+                for (uint32_t i = 0; i < hdr.num_files; i++) {
+                    flags[i] = (unsigned char)((sel[i / 8] >> (7 - (i % 8))) & 1);
+                }
+                torrent_mgr_set_selection(idx, flags, torrent->num_files);
+                free(flags);
+            }
+        }
+        free(sel);
+    }
+
+    if (hdr.num_pieces == torrent->num_pieces) {
+        size_t bf_len = ((size_t)torrent->num_pieces + 7) / 8;
+        unsigned char *bf = malloc(bf_len ? bf_len : 1);
+
+        if (bf && bf_len > 0 && read(fd, bf, bf_len) == (ssize_t)bf_len)
+            mt->restore_pieces = bf;   /* se aplica en torrent_mgr_start() */
+        else
+            free(bf);
+    }
+
+    close(fd);
+
+    ui_log("restore: '%s' (%s)", mt->name,
+           hdr.torrent_state == 1 ? "downloading" :
+           (hdr.torrent_state == 2 ? "done" : "stopped"));
+
+    /* Se arranca tambien el que estaba terminado: la verificacion y el propio
+     * motor lo volveran a marcar como DONE en cuanto las piezas cuadren. Asi el
+     * bitfield se aplica en un solo sitio (torrent_mgr_start). */
+    if (hdr.torrent_state == 1 || hdr.torrent_state == 2)
+        torrent_mgr_start(idx);
+}
+
+void torrent_mgr_restore_state(void)
+{
+    DIR *dir;
+    struct dirent *entry;
+    int restored = 0;
+
+    dir = opendir(state_dir());
+    if (!dir) {
+        ui_log("restore: no state directory at %s", state_dir());
+        return;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        size_t n = strlen(entry->d_name);
+
+        if (n < 7 || strcmp(entry->d_name + n - 6, ".state") != 0)
+            continue;
+
+        state_restore_one(entry->d_name);
+        restored++;
+    }
+
+    closedir(dir);
+
+    if (restored > 0)
+        ui_log("restore: %d torrent(s) from %s", restored, state_dir());
+}
+
 /**
  * Traduce la seleccion de ficheros a piezas saltadas.
  *
@@ -527,6 +861,21 @@ int torrent_mgr_start(int index)
      * arrancar para que el motor no pida lo que el usuario no quiere. */
     apply_file_selection(mt);
 
+    /* Piezas que el estado guardado daba por buenas: se dan por completas para
+     * no volver a bajarlas y se verifican en segundo plano. */
+    if (mt->restore_pieces) {
+        for (size_t p = 0; p < mt->torrent->num_pieces; p++) {
+            if (mt->restore_pieces[p >> 3] & (1u << (7 - (p & 7))))
+                piece_mgr_restore(&mt->piece_mgr, p);
+        }
+        free(mt->restore_pieces);
+        mt->restore_pieces = NULL;
+        mt->verify_next = 0;
+
+        ui_log("resume: %zu of %zu pieces already on disk, verifying in background",
+               mt->piece_mgr.num_complete, mt->torrent->num_pieces);
+    }
+
     /* Ranuras de descarga: el objetivo es tener muchas piezas en vuelo a la vez
      * (es la palanca de velocidad: con 27 peers conectados y 4 ranuras solo
      * trabajan 4), pero con un presupuesto de memoria. Este torrent tiene piezas
@@ -595,6 +944,9 @@ void torrent_mgr_stop(int index)
     rx_drop_all(mt);       /* Las piezas a medias vuelven a la cola */
     mt->rx_slots = 0;
     file_writer_finish(&mt->file_writer);
+
+    /* Que un "parar" tambien sobreviva a un reinicio. */
+    state_write(mt);
 }
 
 void torrent_mgr_remove(int index)
@@ -610,6 +962,21 @@ void torrent_mgr_remove(int index)
     rx_teardown(mt);
     free(mt->file_selected);
     mt->file_selected = NULL;
+    free(mt->restore_pieces);
+    mt->restore_pieces = NULL;
+    free(mt->verify_buf);
+    mt->verify_buf = NULL;
+    mt->verify_next = -1;
+
+    /* Borrar el estado en disco: si no, reapareceria al reiniciar. */
+    {
+        char path[700];
+        snprintf(path, sizeof(path), "%s/%s.state", state_dir(), mt->id);
+        unlink(path);
+        snprintf(path, sizeof(path), "%s/%s.torrent", state_dir(), mt->id);
+        unlink(path);
+    }
+
     torrent_free(mt->torrent);
     mt->torrent = NULL;
 
@@ -1499,8 +1866,14 @@ int torrent_mgr_tick(void)
 
         active++;
 
+        /* Verificacion en segundo plano de lo recuperado del disco. Antes de
+         * dar el torrent por terminado, para no declararlo completo con piezas
+         * que luego resulten corruptas. */
+        if (mt->verify_next >= 0)
+            verify_step(mt);
+
         /* Check if complete */
-        if (piece_mgr_is_done(&mt->piece_mgr)) {
+        if (mt->verify_next < 0 && piece_mgr_is_done(&mt->piece_mgr)) {
             file_writer_finish(&mt->file_writer);
             mt->state = TORRENT_DONE;
             mt->progress = 1.0f;
@@ -1539,6 +1912,13 @@ int torrent_mgr_tick(void)
                     peer->last_bytes = peer->downloaded;
                 }
             }
+        }
+
+        /* Volcar el estado cada 10 s: es lo que permite reanudar tras un
+         * reinicio o un cuelgue. Son unos pocos KB. */
+        if (mt->state == TORRENT_DOWNLOADING && now - mt->last_state_save >= 10) {
+            mt->last_state_save = now;
+            state_write(mt);
         }
 
         /* Re-announce. El intervalo que pide el tracker (1800 s en el de
@@ -2037,8 +2417,33 @@ void torrent_mgr_log_progress(void)
 
 void torrent_mgr_shutdown(void)
 {
-    for (int i = num_torrents - 1; i >= 0; i--) {
-        torrent_mgr_remove(i);
+    /* Guardar el estado de todos antes de soltar memoria: si no, un cierre
+     * limpio (por ejemplo, un deploy) borraria la lista y no habria nada que
+     * reanudar. Aqui no se borran los ficheros de estado (para eso esta
+     * torrent_mgr_remove). */
+    for (int i = 0; i < num_torrents; i++) {
+        state_write(&torrents[i]);
+        dht_unwant(torrents[i].info_hash);
     }
+
+    for (int i = 0; i < num_torrents; i++) {
+        managed_torrent_t *mt = &torrents[i];
+
+        for (int p = 0; p < mt->num_peers; p++) {
+            if (mt->peers[p].sock >= 0)
+                net_close(mt->peers[p].sock);
+            free(mt->peers[p].bitfield);
+        }
+
+        piece_mgr_destroy(&mt->piece_mgr);
+        file_writer_destroy(&mt->file_writer);
+        rx_teardown(mt);
+        free(mt->file_selected);
+        free(mt->restore_pieces);
+        free(mt->verify_buf);
+        torrent_free(mt->torrent);
+        memset(mt, 0, sizeof(*mt));
+    }
+
     num_torrents = 0;
 }

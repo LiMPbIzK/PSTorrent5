@@ -117,6 +117,38 @@ void piece_mgr_skip(piece_mgr_t *pm, size_t index)
     pm->num_skipped++;
 }
 
+void piece_mgr_restore(piece_mgr_t *pm, size_t index)
+{
+    if (!pm || index >= pm->num_pieces)
+        return;
+
+    /* Si ya esta resuelta (completa o saltada por la seleccion), no se toca. */
+    if (pm->pieces[index].state != PIECE_FREE)
+        return;
+
+    pm->pieces[index].state = PIECE_COMPLETE;
+    pm->num_complete++;
+
+    if (index / 8 < pm->bitfield_len)
+        pm->bitfield[index / 8] |= (uint8_t)(1 << (7 - (index % 8)));
+}
+
+void piece_mgr_unmark(piece_mgr_t *pm, size_t index)
+{
+    if (!pm || index >= pm->num_pieces)
+        return;
+
+    if (pm->pieces[index].state != PIECE_COMPLETE)
+        return;
+
+    pm->pieces[index].state = PIECE_FREE;
+    if (pm->num_complete > 0)
+        pm->num_complete--;
+
+    if (index / 8 < pm->bitfield_len)
+        pm->bitfield[index / 8] &= (uint8_t)~(1 << (7 - (index % 8)));
+}
+
 int piece_mgr_is_done(const piece_mgr_t *pm)
 {
     if (!pm) return 1;

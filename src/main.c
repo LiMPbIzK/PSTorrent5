@@ -691,6 +691,11 @@ int main(void)
      * cliente sigue funcionando solo con trackers. */
     dht_init(torrent_mgr_on_dht_peer);
 
+    /* Reanudar lo que hubiera antes de este arranque: el estado vive en el
+     * mismo directorio que el log. Va despues de dht_init para que los torrents
+     * recuperados puedan registrarse en la DHT. */
+    torrent_mgr_restore_state();
+
     /* Show available storage paths */
     storage_path_t paths[MAX_STORAGE_PATHS];
     size_t num_paths = 0;
