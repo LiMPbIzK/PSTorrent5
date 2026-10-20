@@ -26,6 +26,11 @@ typedef struct {
     // Multi-file: current file tracking
     int        current_file_idx;
     int64_t    current_file_offset; // Offset within current file
+
+    /* Seleccion de ficheros (1 byte por fichero, 1 = descargar). NULL = todos.
+     * Los ficheros no elegidos no se escriben ni se crean: sus bytes dentro de
+     * una pieza compartida se descartan (la pieza se verifica igual). */
+    const uint8_t *file_selected;
 } file_writer_t;
 
 /**

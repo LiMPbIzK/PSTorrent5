@@ -118,6 +118,12 @@ int file_writer_write_piece(file_writer_t *fw,
             size_t write_len = (size_t)(write_end - write_start);
 
             if (write_len > 0) {
+                /* Fichero no elegido: sus bytes del bloque se tiran, pero el
+                 * cursor de lectura del bloque tiene que avanzar igual o los
+                 * ficheros siguientes recibirian datos desplazados. */
+                if (fw->file_selected && !fw->file_selected[i]) {
+                    data_offset += write_len;
+                } else {
                 char full_path[1024];
                 if (!safe_relative_path(fw->torrent->files[i].path)) {
                     errno = EINVAL;
@@ -148,6 +154,7 @@ int file_writer_write_piece(file_writer_t *fw,
 
                 data_offset += write_len;
                 fw->written += write_len;
+                }
             }
         }
 

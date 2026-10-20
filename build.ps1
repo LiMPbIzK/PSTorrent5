@@ -163,7 +163,12 @@ if ($NeedEmbed) {
 
 # --------------------------------------------------------------- compilar ----
 New-Item -ItemType Directory -Force -Path $ObjDir | Out-Null
-$Headers = Get-ChildItem (Join-Path $Root 'include') -Filter '*.h' -ErrorAction SilentlyContinue
+# Cabeceras de las que dependen los objetos: las de include/ y las generadas en
+# src/ (web_content.h sale de index.html y, si no se vigila, el panel no cambia
+# en el ELF: se regeneraba el .h y main.o no se recompilaba).
+$Headers = @()
+$Headers += Get-ChildItem (Join-Path $Root 'include') -Filter '*.h' -ErrorAction SilentlyContinue
+$Headers += Get-ChildItem (Join-Path $Root 'src') -Filter '*.h' -ErrorAction SilentlyContinue
 
 $objects = @()
 $compiled = 0

@@ -193,6 +193,12 @@ typedef struct {
     int              num_peers;
     int              active_peers;
 
+    /* Seleccion de ficheros: 1 byte por fichero del .torrent (1 = descargar).
+     * NULL = todos. Las piezas que no toca ningun fichero elegido se marcan
+     * como saltadas, porque la verificacion SHA-1 es por pieza entera. */
+    uint8_t         *file_selected;
+    int64_t          selected_size;   // Bytes que suman los ficheros elegidos
+
     /* Direcciones candidatas (del tracker y, sobre todo, de ut_pex). */
     struct {
         peer_addr_t addr;
@@ -336,6 +342,23 @@ int torrent_mgr_tick(void);
  */
 void torrent_mgr_on_dht_peer(const unsigned char info_hash[20],
                              const peer_addr_t *peer);
+
+/**
+ * Fija que ficheros se quieren descargar (1 byte por fichero, 1 = si).
+ * Debe llamarse antes de torrent_mgr_start(): la seleccion se traduce a piezas
+ * saltadas al arrancar.
+ * @param count  Debe coincidir con el numero de ficheros del torrent
+ * @return 0 correcto, -1 indice o tamano invalido
+ */
+int torrent_mgr_set_selection(int index, const unsigned char *selected,
+                             size_t count);
+
+/**
+ * Ficheros del torrent en JSON, para el selector del panel.
+ * @param out_len Salida: longitud del texto
+ * @return Buffer reservado (free() al terminar), o NULL
+ */
+char *torrent_mgr_files_json(int index, size_t *out_len);
 
 /**
  * Get JSON status string for all torrents.

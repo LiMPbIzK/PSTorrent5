@@ -115,7 +115,8 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 - [x] Otras dos bombas de pila eliminadas en el motor: `uint8_t piece_buf[256 KB]` en `process_peer()` (ahora `static`) y `char data_b64[1 MB]` en la subida de `.torrent`
 - [ ] Autenticación (token o Basic) con aviso en el panel
 - [ ] Gestión completa: pause / resume / delete / prioridad / reintentar
-- [ ] Selección de ficheros del `.torrent`
+- [x] **Selección de ficheros del `.torrent`**: al subir un torrent con varios ficheros se queda **parado** y el panel muestra una ventana con la lista (casillas, tamaño por archivo y total seleccionado). La selección se traduce a **piezas saltadas** (`PIECE_SKIPPED`): la verificación SHA-1 es por pieza entera, así que una pieza se baja si la toca al menos un fichero elegido, y los bytes de un fichero no elegido dentro de una pieza compartida se descartan al escribir (`file_writer.file_selected`). El progreso va sobre lo pedido, no sobre el torrent entero. API: `GET /api/torrents/<id>/files` y `POST /api/torrents/<id>/select` con `files=0,2,5`
+- [ ] **Cambiar la selección con la descarga ya en marcha**: hoy solo se elige al añadir (o reiniciando el torrent). Requiere recalcular piezas y resetear las que dejen de interesar
 - [ ] Historial de descargas y log visible en el panel
 - [ ] Sección de ajustes con estado de SM+, del loader 9021 y del espacio libre
 

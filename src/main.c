@@ -275,18 +275,24 @@ static http_response_t *handle_api_upload(const http_request_t *req)
     if (idx < 0)
         return json_error(400, "invalid_torrent", "Invalid torrent file");
 
-    /* Start download automatically */
-    if (torrent_mgr_start(idx) < 0)
+    managed_torrent_t *mt = torrent_mgr_get(idx);
+
+    /* Un torrent con varios ficheros se queda parado esperando la seleccion: el
+     * panel muestra la lista y el usuario decide que bajar. Con un solo fichero
+     * no hay nada que elegir y arranca del tiron. */
+    int needs_selection = (mt && mt->torrent && mt->torrent->is_multi_file &&
+                           mt->torrent->num_files > 1);
+
+    if (!needs_selection && torrent_mgr_start(idx) < 0)
         return torrent_start_error_response(idx, 1);
 
-    managed_torrent_t *mt = torrent_mgr_get(idx);
     char resp_json[512];
     char escaped_name[384];
     json_escape_text(mt ? mt->name : "Unknown",
                      escaped_name, sizeof(escaped_name));
     int n = snprintf(resp_json, sizeof(resp_json),
-        "{\"success\":true,\"id\":%d,\"name\":\"%s\"}",
-        idx, escaped_name);
+        "{\"success\":true,\"id\":%d,\"name\":\"%s\",\"needsSelection\":%s}",
+        idx, escaped_name, needs_selection ? "true" : "false");
 
     return http_response_new(200, "application/json", resp_json, (size_t)n);
 }
@@ -296,10 +302,6 @@ static http_response_t *handle_api_upload(const http_request_t *req)
  */
 static http_response_t *handle_api_action(const http_request_t *req)
 {
-    if (req->method != HTTP_POST) {
-        return json_error(400, "post_required", "POST required");
-    }
-
     /* Parse path: /api/torrents/<id>/<action> */
     int id = -1;
     char action[16] = {0};
@@ -322,6 +324,89 @@ static http_response_t *handle_api_action(const http_request_t *req)
 
     p++; // skip '/'
     strncpy(action, p, sizeof(action) - 1);
+
+    /* GET /api/torrents/<id>/files: lista de ficheros con su estado de seleccion */
+    if (strcmp(action, "files") == 0) {
+        size_t json_len = 0;
+        char *json = torrent_mgr_files_json(id, &json_len);
+        http_response_t *resp;
+
+        if (!json)
+            return json_error(404, "not_found", "Torrent not found");
+
+        resp = http_response_new(200, "application/json", json, json_len);
+        free(json);
+        return resp;
+    }
+
+    if (req->method != HTTP_POST) {
+        return json_error(400, "post_required", "POST required");
+    }
+
+    /* POST /api/torrents/<id>/select con files=0,2,5 */
+    if (strcmp(action, "select") == 0) {
+        managed_torrent_t *mt = torrent_mgr_get(id);
+        char *list;
+        unsigned char *mask;
+        size_t count;
+        size_t chosen = 0;
+
+        if (!mt || !mt->torrent)
+            return json_error(404, "not_found", "Torrent not found");
+
+        count = mt->torrent->num_files;
+        if (count == 0)
+            return json_error(400, "single_file",
+                              "This torrent has a single file");
+
+        list = calloc(1, 8192);
+        mask = calloc(count, 1);
+        if (!list || !mask) {
+            free(list);
+            free(mask);
+            return json_error(500, "no_memory", "Not enough memory");
+        }
+
+        http_get_param(req->body, "files", list, 8192);
+
+        const char *q = list;
+        while (*q) {
+            char *end = NULL;
+            long v = strtol(q, &end, 10);
+
+            if (end == q)
+                break;
+            if (v >= 0 && (size_t)v < count)
+                mask[v] = 1;
+            q = end;
+            if (*q == ',')
+                q++;
+        }
+
+        for (size_t i = 0; i < count; i++)
+            chosen += mask[i];
+
+        if (chosen == 0) {
+            free(list);
+            free(mask);
+            return json_error(400, "empty_selection",
+                              "Select at least one file");
+        }
+
+        int ok = torrent_mgr_set_selection(id, mask, count);
+        free(list);
+        free(mask);
+
+        if (ok < 0)
+            return json_error(400, "selection_failed",
+                              "Could not apply the selection");
+
+        if (torrent_mgr_start(id) < 0)
+            return torrent_start_error_response(id, 1);
+
+        return http_response_new(200, "application/json",
+                                 "{\"success\":true}", 17);
+    }
 
     int result = -1;
     if (strcmp(action, "start") == 0)

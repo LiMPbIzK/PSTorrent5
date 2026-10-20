@@ -137,6 +137,7 @@ int torrent_mgr_add(torrent_t *torrent, const char *save_path,
     mt->torrent = torrent;
     mt->file_writer.fd = -1;
     mt->total_size = torrent->total_size;
+    mt->selected_size = torrent->total_size;   /* por defecto, todo */
     mt->is_magnet = is_magnet;
     if (magnet_uri)
         strncpy(mt->magnet_uri, magnet_uri, sizeof(mt->magnet_uri) - 1);
@@ -358,6 +359,94 @@ static void peer_close(managed_torrent_t *mt, int peer_idx)
         rx_drop_peer(mt, peer_idx);
 }
 
+/**
+ * Traduce la seleccion de ficheros a piezas saltadas.
+ *
+ * La verificacion es por pieza entera (SHA-1 del bloque de 256 KB), asi que no
+ * se puede "media pieza": una pieza se descarga si la toca al menos un fichero
+ * elegido, y se salta solo si no la toca ninguno. Los bytes de un fichero no
+ * elegido que caen dentro de una pieza compartida se descartan al escribir.
+ */
+static void apply_file_selection(managed_torrent_t *mt)
+{
+    piece_mgr_t *pm = &mt->piece_mgr;
+    int64_t piece_len = mt->torrent->piece_length;
+    unsigned char *needed;
+    int64_t offset = 0;
+    int64_t selected = 0;
+
+    if (!mt->file_selected || mt->torrent->num_files == 0 || piece_len <= 0) {
+        mt->selected_size = mt->torrent->total_size;
+        return;
+    }
+
+    needed = calloc(pm->bitfield_len ? pm->bitfield_len : 1, 1);
+    if (!needed) {
+        /* Sin memoria para el mapa: se descarga todo, que es lo que se hacia
+         * antes de existir esta funcion. */
+        ui_log("selection: no memory for the piece map; downloading everything");
+        mt->selected_size = mt->torrent->total_size;
+        return;
+    }
+
+    for (size_t i = 0; i < mt->torrent->num_files; i++) {
+        int64_t len = mt->torrent->files[i].length;
+
+        if (mt->file_selected[i] && len > 0) {
+            int64_t first = offset / piece_len;
+            int64_t last = (offset + len - 1) / piece_len;
+
+            selected += len;
+
+            for (int64_t p = first; p <= last && p < (int64_t)pm->num_pieces; p++)
+                needed[p >> 3] |= (unsigned char)(1 << (7 - (p & 7)));
+        }
+
+        offset += len;
+    }
+
+    for (size_t p = 0; p < pm->num_pieces; p++) {
+        if (!(needed[p >> 3] & (1 << (7 - (p & 7)))))
+            piece_mgr_skip(pm, p);
+    }
+
+    free(needed);
+
+    mt->selected_size = selected;
+    ui_log("selection: %lld of %lld bytes, %zu of %zu pieces skipped",
+           (long long)selected, (long long)mt->torrent->total_size,
+           pm->num_skipped, pm->num_pieces);
+}
+
+int torrent_mgr_set_selection(int index, const unsigned char *selected,
+                              size_t count)
+{
+    managed_torrent_t *mt;
+
+    if (index < 0 || index >= num_torrents)
+        return -1;
+
+    mt = &torrents[index];
+    if (!mt->torrent)
+        return -1;
+
+    /* Un solo fichero: no hay nada que elegir. */
+    if (mt->torrent->num_files == 0)
+        return 0;
+
+    if (count != mt->torrent->num_files)
+        return -1;
+
+    if (!mt->file_selected) {
+        mt->file_selected = malloc(count);
+        if (!mt->file_selected)
+            return -1;
+    }
+
+    memcpy(mt->file_selected, selected, count);
+    return 0;
+}
+
 int torrent_mgr_start(int index)
 {
     if (index < 0 || index >= num_torrents) return -1;
@@ -426,6 +515,10 @@ int torrent_mgr_start(int index)
                    mt->torrent->total_size,
                    mt->torrent->pieces);
 
+    /* Traducir la seleccion de ficheros a piezas saltadas. Se hace antes de
+     * arrancar para que el motor no pida lo que el usuario no quiere. */
+    apply_file_selection(mt);
+
     /* Ranuras de descarga: el objetivo es tener muchas piezas en vuelo a la vez
      * (es la palanca de velocidad: con 27 peers conectados y 4 ranuras solo
      * trabajan 4), pero con un presupuesto de memoria. Este torrent tiene piezas
@@ -449,6 +542,8 @@ int torrent_mgr_start(int index)
                  mt->save_path, strerror(saved_errno));
         return -1;
     }
+
+    mt->file_writer.file_selected = mt->file_selected;
 
     mt->state = TORRENT_DOWNLOADING;
     mt->start_time = get_time_sec();
@@ -505,6 +600,8 @@ void torrent_mgr_remove(int index)
     piece_mgr_destroy(&mt->piece_mgr);
     file_writer_destroy(&mt->file_writer);
     rx_teardown(mt);
+    free(mt->file_selected);
+    mt->file_selected = NULL;
     torrent_free(mt->torrent);
     mt->torrent = NULL;
 
@@ -861,7 +958,9 @@ static int announce_to_tracker(managed_torrent_t *mt)
     params.port = 6881;
     params.uploaded = (int64_t)mt->uploaded;
     params.downloaded = (int64_t)mt->downloaded;
-    params.left = (int64_t)(mt->total_size - mt->downloaded);
+    params.left = (int64_t)((mt->selected_size > 0 ? mt->selected_size
+                                                   : mt->total_size) -
+                            (int64_t)mt->downloaded);
     params.compact = 1;
 
     int contacted = 0;
@@ -1631,6 +1730,76 @@ void torrent_mgr_status_json(char *buf, size_t bufsz)
     }
 
     json_writef(&writer, "]}");
+}
+
+/**
+ * Ficheros del torrent en JSON, para el selector del panel.
+ *
+ * El buffer se reserva aqui (es del tamaño de los nombres) porque un .torrent
+ * puede traer cientos de ficheros con rutas largas.
+ */
+char *torrent_mgr_files_json(int index, size_t *out_len)
+{
+    managed_torrent_t *mt;
+    json_writer_t writer;
+    char *buf;
+    size_t cap = 1024;
+
+    if (index < 0 || index >= num_torrents)
+        return NULL;
+
+    mt = &torrents[index];
+    if (!mt->torrent)
+        return NULL;
+
+    for (size_t i = 0; i < mt->torrent->num_files; i++)
+        cap += mt->torrent->files[i].path_len * 2 + 128;
+
+    buf = malloc(cap);
+    if (!buf)
+        return NULL;
+
+    writer.buf = buf;
+    writer.size = cap;
+    writer.pos = 0;
+
+    json_writef(&writer, "{\"id\":%d,\"name\":", index);
+    json_write_string(&writer, mt->name);
+    json_writef(&writer,
+                ",\"singleFile\":%s,\"totalSize\":%lld,\"selectedSize\":%lld,"
+                "\"pieceLength\":%lld,\"files\":[",
+                mt->torrent->is_multi_file ? "false" : "true",
+                (long long)mt->torrent->total_size,
+                (long long)(mt->selected_size > 0 ? mt->selected_size
+                                                  : mt->torrent->total_size),
+                (long long)mt->torrent->piece_length);
+
+    if (!mt->torrent->is_multi_file) {
+        json_writef(&writer, "{\"index\":0,\"path\":");
+        json_write_string(&writer, mt->torrent->file_name ? mt->torrent->file_name
+                                                          : mt->name);
+        json_writef(&writer, ",\"size\":%lld,\"selected\":true}",
+                    (long long)mt->torrent->length);
+    } else {
+        for (size_t i = 0; i < mt->torrent->num_files; i++) {
+            int sel = !mt->file_selected || mt->file_selected[i];
+
+            if (i > 0)
+                json_writef(&writer, ",");
+            json_writef(&writer, "{\"index\":%zu,\"path\":", i);
+            json_write_string(&writer, mt->torrent->files[i].path);
+            json_writef(&writer, ",\"size\":%lld,\"selected\":%s}",
+                        (long long)mt->torrent->files[i].length,
+                        sel ? "true" : "false");
+        }
+    }
+
+    json_writef(&writer, "]}");
+
+    if (out_len)
+        *out_len = writer.pos;
+
+    return buf;
 }
 
 /**

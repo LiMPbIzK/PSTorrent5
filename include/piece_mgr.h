@@ -13,7 +13,8 @@ typedef enum {
     PIECE_FREE,         // Not yet requested
     PIECE_REQUESTED,    // Currently being downloaded
     PIECE_COMPLETE,     // Downloaded and verified
-    PIECE_FAILED        // Download failed
+    PIECE_FAILED,       // Download failed
+    PIECE_SKIPPED       // No la queremos: ningun fichero elegido la toca
 } piece_state_t;
 
 /**
@@ -37,6 +38,7 @@ typedef struct {
     int64_t      total_size;
     size_t       num_complete;
     size_t       num_failed;
+    size_t       num_skipped;   // Piezas fuera de la seleccion de ficheros
 
     // Bitfield of pieces we have (for HAVE messages)
     unsigned char *bitfield;
@@ -87,6 +89,14 @@ int piece_mgr_complete(piece_mgr_t *pm, size_t index,
  * Mark a piece as failed (can be retried).
  */
 void piece_mgr_failed(piece_mgr_t *pm, size_t index);
+
+/**
+ * Mark a piece as not wanted (no selected file touches it).
+ *
+ * No se descarga ni se verifican sus datos: simplemente se da por resuelta para
+ * que el torrent pueda terminar. Si la pieza ya no estaba libre, no se toca.
+ */
+void piece_mgr_skip(piece_mgr_t *pm, size_t index);
 
 /**
  * Check if all pieces are downloaded.

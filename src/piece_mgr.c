@@ -104,16 +104,37 @@ void piece_mgr_failed(piece_mgr_t *pm, size_t index)
     pm->num_failed++;
 }
 
+void piece_mgr_skip(piece_mgr_t *pm, size_t index)
+{
+    if (!pm || index >= pm->num_pieces)
+        return;
+
+    /* Solo tiene sentido sobre una pieza que aun no se ha tocado. */
+    if (pm->pieces[index].state != PIECE_FREE)
+        return;
+
+    pm->pieces[index].state = PIECE_SKIPPED;
+    pm->num_skipped++;
+}
+
 int piece_mgr_is_done(const piece_mgr_t *pm)
 {
     if (!pm) return 1;
-    return pm->num_complete >= pm->num_pieces;
+    return pm->num_complete + pm->num_skipped >= pm->num_pieces;
 }
 
 float piece_mgr_progress(const piece_mgr_t *pm)
 {
+    size_t wanted;
+
     if (!pm || pm->num_pieces == 0) return 0.0f;
-    return (float)pm->num_complete / (float)pm->num_pieces;
+
+    /* El progreso va sobre lo que el usuario ha pedido, no sobre el torrent
+     * entero: si elige la mitad, la barra llega al 100% al tenerla. */
+    wanted = pm->num_pieces - pm->num_skipped;
+    if (wanted == 0) return 1.0f;
+
+    return (float)pm->num_complete / (float)wanted;
 }
 
 void piece_mgr_destroy(piece_mgr_t *pm)
