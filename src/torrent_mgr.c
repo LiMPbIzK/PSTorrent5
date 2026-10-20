@@ -82,6 +82,14 @@ static uint64_t get_time_sec(void)
     return (uint64_t)ts.tv_sec;
 }
 
+/** Tiempo en milisegundos, para presupuestar cuanto dura una vuelta. */
+static uint64_t get_time_ms_local(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
+
 void torrent_mgr_init(void)
 {
     memset(torrents, 0, sizeof(torrents));
@@ -1184,7 +1192,7 @@ static void peer_handle_extended(managed_torrent_t *mt, int peer_idx,
                 fresh++;
         }
 
-        if (fresh > 0)
+        if (fresh >= 8)
             ui_log("peer %d ut_pex: %d new peer(s) (pool=%d)",
                    peer_idx, fresh, mt->peer_pool_count);
     }
@@ -1471,6 +1479,15 @@ static void peer_pump(managed_torrent_t *mt)
     }
 }
 
+/**
+ * Presupuesto de tiempo por vuelta para procesar peers, en milisegundos.
+ *
+ * El motor y el panel web comparten hilo, asi que una vuelta larga es una web
+ * que no carga. Lo que no entre aqui se atiende en la vuelta siguiente (10 ms
+ * despues): no se pierde nada, solo se reparte.
+ */
+#define TICK_PEER_BUDGET_MS 120
+
 int torrent_mgr_tick(void)
 {
     int active = 0;
@@ -1552,23 +1569,37 @@ int torrent_mgr_tick(void)
         }
 
         /* Peers listos: drenar todo lo disponible. Un mensaje por vuelta ataba
-         * la descarga a la cadencia del bucle y dejaba bloques esperando. */
-        for (int p = 0; p < mt->num_peers; p++) {
-            if (mt->peers[p].state != PEER_STATE_READY)
-                continue;
+         * la descarga a la cadencia del bucle y dejaba bloques esperando.
+         *
+         * Con presupuesto de tiempo: medido en consola, con 26 peers y varios
+         * atascados la vuelta tardaba entre 2 y 21 s y dejaba el panel muerto.
+         * Lo que no entre aqui se atiende en la vuelta siguiente (10 ms despues). */
+        {
+            uint64_t phase_start = get_time_ms_local();
 
-            for (int guard = 0; guard < 64; guard++) {
-                struct timeval tv = {0, 0};
-                fd_set readfds;
-                FD_ZERO(&readfds);
-                FD_SET(mt->peers[p].sock, &readfds);
-
-                if (select(mt->peers[p].sock + 1, &readfds, NULL, NULL, &tv) <= 0)
-                    break;
-
-                process_peer(mt, p);
+            for (int p = 0; p < mt->num_peers; p++) {
                 if (mt->peers[p].state != PEER_STATE_READY)
+                    continue;
+
+                if (get_time_ms_local() - phase_start > TICK_PEER_BUDGET_MS)
                     break;
+
+                for (int guard = 0; guard < 64; guard++) {
+                    struct timeval tv = {0, 0};
+                    fd_set readfds;
+                    FD_ZERO(&readfds);
+                    FD_SET(mt->peers[p].sock, &readfds);
+
+                    if (select(mt->peers[p].sock + 1, &readfds, NULL, NULL, &tv) <= 0)
+                        break;
+
+                    process_peer(mt, p);
+                    if (mt->peers[p].state != PEER_STATE_READY)
+                        break;
+
+                    if (get_time_ms_local() - phase_start > TICK_PEER_BUDGET_MS)
+                        break;
+                }
             }
         }
 
@@ -1637,9 +1668,7 @@ typedef struct {
     char   *buf;
     size_t  size;
     size_t  pos;
-} json_writer_t;
-
-static void json_writef(json_writer_t *writer, const char *fmt, ...)
+} json_writer_t;static void json_writef(json_writer_t *writer, const char *fmt, ...)
 {
     if (!writer || writer->pos >= writer->size) return;
 

@@ -40,7 +40,7 @@
  * This is the real guarantee that the panel stays usable: the round stops as
  * soon as it is exceeded (it can overshoot by at most one socket timeout).
  */
-#define ANNOUNCE_BUDGET_SEC 8
+#define ANNOUNCE_BUDGET_SEC 4
 
 /**
  * Backoff applied to a tracker that did not answer: fails * this value,

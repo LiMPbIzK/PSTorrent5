@@ -38,13 +38,13 @@
  *
  * Critico: con 0, `SO_RCVTIMEO` queda a cero, que en FreeBSD y Linux significa
  * **sin timeout**, y una lectura a medias de un mensaje se queda colgada para
- * siempre. Eso congela el hilo entero (el panel web incluido). Medido en consola:
- * con 40 peers y trafico de PEX el payload se quedo clavado y hubo que relanzarlo.
+ * siempre. Eso congela el hilo entero (el panel web incluido).
  *
- * Con 2 s, un mensaje legitimo (el bloque mas grande son 16 KB) llega de sobra y
- * un peer atascado cuesta como mucho 2 s antes de cerrarlo.
+ * 1 s: un bloque de 16 KB llega de sobra a cualquier peer util (son 16 KB/s de
+ * minimo) y un peer atascado cuesta 1 s. Con 2 s, varios atascos en la misma
+ * vuelta sumaban decenas de segundos de panel muerto.
  */
-#define NET_PEER_MSG_TIMEOUT_SEC        2
+#define NET_PEER_MSG_TIMEOUT_SEC        1
 
 /**
  * Espera de un tracker UDP (BEP-15), por peticion: hay dos (connect y announce).
