@@ -153,6 +153,7 @@ int torrent_mgr_add(torrent_t *torrent, const char *save_path,
     mt->file_writer.fd = -1;
     mt->total_size = torrent->total_size;
     mt->selected_size = torrent->total_size;   /* por defecto, todo */
+    mt->verify_next = -1;                      /* sin nada que verificar */
     mt->is_magnet = is_magnet;
     if (magnet_uri)
         strncpy(mt->magnet_uri, magnet_uri, sizeof(mt->magnet_uri) - 1);
@@ -789,6 +790,32 @@ int torrent_mgr_set_selection(int index, const unsigned char *selected,
     return 0;
 }
 
+/**
+ * Recalcula los bytes descargados a partir de las piezas completas.
+ *
+ * Al reanudar, el contador de bytes arrancaba a 0 aunque hubiera piezas buenas:
+ * el panel mostraba "0.0 MB" con la barra al 0,42%.
+ */
+static void recompute_downloaded(managed_torrent_t *mt)
+{
+    uint64_t total = 0;
+    int64_t piece_len = mt->torrent->piece_length;
+
+    for (size_t p = 0; p < mt->torrent->num_pieces; p++) {
+        if (mt->piece_mgr.pieces[p].state != PIECE_COMPLETE)
+            continue;
+
+        if (p == mt->torrent->num_pieces - 1) {
+            total += (uint64_t)(mt->torrent->total_size -
+                                (int64_t)p * piece_len);
+        } else {
+            total += (uint64_t)piece_len;
+        }
+    }
+
+    mt->downloaded = total;
+}
+
 int torrent_mgr_start(int index)
 {
     if (index < 0 || index >= num_torrents) return -1;
@@ -799,7 +826,8 @@ int torrent_mgr_start(int index)
     if (!mt->torrent) return -1;
 
     if (mt->state == TORRENT_ERROR) {
-        piece_mgr_destroy(&mt->piece_mgr);
+        /* El gestor de piezas NO se destruye: puede tener piezas buenas y
+         * destruirlo era perder todo el progreso al reintentar. */
         file_writer_destroy(&mt->file_writer);
     }
     mt->error_type = TERR_NONE;
@@ -850,12 +878,22 @@ int torrent_mgr_start(int index)
         return -1;
     }
 
-    /* Initialize piece manager */
-    piece_mgr_init(&mt->piece_mgr,
-                   mt->torrent->num_pieces,
-                   mt->torrent->piece_length,
-                   mt->torrent->total_size,
-                   mt->torrent->pieces);
+    /* Gestor de piezas: SOLO la primera vez.
+     *
+     * Recrearlo en cada start borraba todas las piezas completas que ya estaban
+     * en memoria, asi que parar y darle a Start volvia a empezar desde la pieza
+     * 0 (con el contador de bytes intacto, de ahi el "0.00% (24.8 MB)"). Si ya
+     * existe, se conserva: sus piezas siguen siendo validas. */
+    if (mt->piece_mgr.num_pieces == 0) {
+        piece_mgr_init(&mt->piece_mgr,
+                       mt->torrent->num_pieces,
+                       mt->torrent->piece_length,
+                       mt->torrent->total_size,
+                       mt->torrent->pieces);
+    } else {
+        /* Lo que se estaba pidiendo cuando se paro no va a llegar nunca. */
+        piece_mgr_reset_requested(&mt->piece_mgr);
+    }
 
     /* Traducir la seleccion de ficheros a piezas saltadas. Se hace antes de
      * arrancar para que el motor no pida lo que el usuario no quiere. */
@@ -875,6 +913,11 @@ int torrent_mgr_start(int index)
         ui_log("resume: %zu of %zu pieces already on disk, verifying in background",
                mt->piece_mgr.num_complete, mt->torrent->num_pieces);
     }
+
+    /* Los bytes descargados se recalculan desde las piezas: al reanudar, el
+     * contador arrancaba a 0 y el panel decia "0.0 MB" con la barra al 0,42%. */
+    recompute_downloaded(mt);
+    mt->rx_pieces_done = mt->piece_mgr.num_complete;
 
     /* Ranuras de descarga: el objetivo es tener muchas piezas en vuelo a la vez
      * (es la palanca de velocidad: con 27 peers conectados y 4 ranuras solo

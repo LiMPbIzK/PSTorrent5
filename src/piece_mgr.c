@@ -149,6 +149,17 @@ void piece_mgr_unmark(piece_mgr_t *pm, size_t index)
         pm->bitfield[index / 8] &= (uint8_t)~(1 << (7 - (index % 8)));
 }
 
+void piece_mgr_reset_requested(piece_mgr_t *pm)
+{
+    if (!pm)
+        return;
+
+    for (size_t i = 0; i < pm->num_pieces; i++) {
+        if (pm->pieces[i].state == PIECE_REQUESTED)
+            pm->pieces[i].state = PIECE_FREE;
+    }
+}
+
 int piece_mgr_is_done(const piece_mgr_t *pm)
 {
     if (!pm) return 1;

@@ -111,6 +111,14 @@ void piece_mgr_restore(piece_mgr_t *pm, size_t index);
 void piece_mgr_unmark(piece_mgr_t *pm, size_t index);
 
 /**
+ * Devolver a la cola las piezas que estaban pedidas.
+ *
+ * Se llama al parar el torrent: esas peticiones ya no van a llegar, y dejarlas
+ * en PIECE_REQUESTED impediria que el torrent se completase nunca.
+ */
+void piece_mgr_reset_requested(piece_mgr_t *pm);
+
+/**
  * Check if all pieces are downloaded.
  */
 int piece_mgr_is_done(const piece_mgr_t *pm);
