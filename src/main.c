@@ -339,6 +339,20 @@ static http_response_t *handle_api_action(const http_request_t *req)
         return resp;
     }
 
+    /* GET /api/torrents/<id>/peers: ficha de peers para el panel */
+    if (strcmp(action, "peers") == 0) {
+        size_t json_len = 0;
+        char *json = torrent_mgr_peers_json(id, &json_len);
+        http_response_t *resp;
+
+        if (!json)
+            return json_error(404, "not_found", "Torrent not found");
+
+        resp = http_response_new(200, "application/json", json, json_len);
+        free(json);
+        return resp;
+    }
+
     if (req->method != HTTP_POST) {
         return json_error(400, "post_required", "POST required");
     }

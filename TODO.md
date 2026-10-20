@@ -117,8 +117,9 @@ Referencia técnica completa: `ARCHITECTURE.md`.
 - [ ] Gestión completa: pause / resume / delete / prioridad / reintentar
 - [x] **Selección de ficheros del `.torrent`**: al subir un torrent con varios ficheros se queda **parado** y el panel muestra una ventana con la lista (casillas, tamaño por archivo y total seleccionado). La selección se traduce a **piezas saltadas** (`PIECE_SKIPPED`): la verificación SHA-1 es por pieza entera, así que una pieza se baja si la toca al menos un fichero elegido, y los bytes de un fichero no elegido dentro de una pieza compartida se descartan al escribir (`file_writer.file_selected`). El progreso va sobre lo pedido, no sobre el torrent entero. API: `GET /api/torrents/<id>/files` y `POST /api/torrents/<id>/select` con `files=0,2,5`
 - [ ] **Cambiar la selección con la descarga ya en marcha**: hoy solo se elige al añadir (o reiniciando el torrent). Requiere recalcular piezas y resetear las que dejen de interesar
-- [ ] Historial de descargas y log visible en el panel
+- [x] **Ficha de peers por torrent**: al pulsar la tarjeta se despliega la tabla de peers con endpoint, **cliente** (deducido del `peer_id`: qBittorrent, Transmission, libtorrent…), % de piezas que tiene cada uno, **bytes recibidos de cada peer**, velocidad por peer y estado (activo / bloqueado / conectando). Ordenada por bytes recibidos, que es lo que se quiere ver: de quién estás bajando de verdad. API: `GET /api/torrents/<id>/peers`
 - [ ] Sección de ajustes con estado de SM+, del loader 9021 y del espacio libre
+- [ ] Historial de descargas y log visible en el panel
 
 ---
 

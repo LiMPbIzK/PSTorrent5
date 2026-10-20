@@ -65,7 +65,7 @@ for (const m of script.matchAll(/\bT\('([^']+)'/g)) keys.add(m[1]);
 for (const m of script.matchAll(/\bT\("([^"]+)"/g)) keys.add(m[1]);
 
 /* Prefijos compuestos en tiempo de ejecución (p. ej. T('error.' + codigo)). */
-const prefixes = ['error.', 'state.'];
+const prefixes = ['error.', 'state.', 'peers.st.'];
 
 /* Claves compuestas en tiempo de ejecución (código + estado del torrent). */
 const dynamic = ['error.post_required','error.magnet_required','error.magnet_invalid',
@@ -74,7 +74,9 @@ const dynamic = ['error.post_required','error.magnet_required','error.magnet_inv
     'error.invalid_torrent','error.start_failed','error.no_tracker','error.no_peers',
     'error.peers_failed','error.write_failed','error.tracker_failed','error.parse_failed',
     'error.hash_mismatch','state.downloading','state.done','state.seeding',
-    'state.stopped','state.error'];
+    'state.stopped','state.error',
+    'peers.st.active','peers.st.choked','peers.st.connecting','peers.st.handshake',
+    'peers.st.idle'];
 for (const k of dynamic) keys.add(k);
 
 const sorted = [...keys].sort();

@@ -154,6 +154,12 @@ typedef struct {
     uint64_t  downloaded;
     uint64_t  uploaded;
     uint64_t  last_keepalive;
+
+    /* Para la ficha del torrent en el panel: desde cuando esta conectado, lo que
+     * nos daba en la ultima muestra y su velocidad. */
+    uint64_t  connected_since;
+    uint64_t  last_bytes;
+    uint64_t  speed;
     unsigned  messages_seen;   // Para limitar las trazas de have/bitfield
 
     /* Piezas que tiene el peer. Sin esto se le pediria una que no tiene y los
@@ -214,6 +220,8 @@ typedef struct {
     uint64_t  total_size;
     int       tracker_announces;
     int       tracker_interval;
+    int       seeders;        // Del ultimo announce (complete/incomplete)
+    int       leechers;
     float     progress;
     uint64_t  speed_down;     // bytes/sec
     uint64_t  speed_up;
@@ -359,6 +367,13 @@ int torrent_mgr_set_selection(int index, const unsigned char *selected,
  * @return Buffer reservado (free() al terminar), o NULL
  */
 char *torrent_mgr_files_json(int index, size_t *out_len);
+
+/**
+ * Peers del torrent en JSON, para la ficha desplegable del panel.
+ * @param out_len Salida: longitud del texto
+ * @return Buffer reservado (free() al terminar), o NULL
+ */
+char *torrent_mgr_peers_json(int index, size_t *out_len);
 
 /**
  * Get JSON status string for all torrents.

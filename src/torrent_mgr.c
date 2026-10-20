@@ -740,6 +740,9 @@ static int peer_start_connect(managed_torrent_t *mt, const peer_addr_t *addr)
     p->last_pex_sent = 0;
     p->downloaded = 0;
     p->uploaded = 0;
+    p->connected_since = 0;
+    p->last_bytes = 0;
+    p->speed = 0;
     p->ext_id_ut_pex = 0;
     p->supports_ext = 0;
 
@@ -754,6 +757,19 @@ static int peer_start_connect(managed_torrent_t *mt, const peer_addr_t *addr)
     p->has_bitfield = 0;
 
     return 1;
+}
+
+/** Peers vivos (los huecos libres de la tabla no cuentan). */
+static int count_live_peers(const managed_torrent_t *mt)
+{
+    int n = 0;
+
+    for (int i = 0; i < mt->num_peers; i++) {
+        if (mt->peers[i].state != PEER_STATE_IDLE)
+            n++;
+    }
+
+    return n;
 }
 
 /** Conexiones que aun no han terminado (connect o handshake en curso). */
@@ -933,6 +949,8 @@ static void peer_step_connecting(managed_torrent_t *mt, int peer_idx)
 
     p->supports_ext = (peer_reserved[5] & 0x10) != 0;
     p->state = PEER_STATE_READY;
+    p->connected_since = now;
+    p->last_bytes = p->downloaded;
     mt->active_peers++;
 
     peer_send_interested(p->sock);
@@ -1053,6 +1071,10 @@ static int announce_to_tracker(managed_torrent_t *mt)
         }
         if (tr->interval > mt->tracker_interval)
             mt->tracker_interval = tr->interval;
+        if (tr->complete > 0 || tr->incomplete > 0) {
+            mt->seeders = tr->complete;
+            mt->leechers = tr->incomplete;
+        }
         peers_reported += tr->num_peers;
 
         /* Los peers del tracker van al pool: el de Ubuntu solo manda UNO por
@@ -1488,6 +1510,17 @@ int torrent_mgr_tick(void)
                 mt->last_speed_calc = now;
                 mt->last_speed_bytes = mt->bytes_in;
                 mt->last_uploaded = mt->uploaded;
+
+                /* Velocidad por peer, para la ficha del panel. */
+                for (int p = 0; p < mt->num_peers; p++) {
+                    torrent_peer_t *peer = &mt->peers[p];
+
+                    if (peer->downloaded >= peer->last_bytes)
+                        peer->speed = (peer->downloaded - peer->last_bytes) / elapsed;
+                    else
+                        peer->speed = 0;
+                    peer->last_bytes = peer->downloaded;
+                }
             }
         }
 
@@ -1714,7 +1747,7 @@ void torrent_mgr_status_json(char *buf, size_t bufsz)
             (unsigned long long)remaining,
             (unsigned long long)mt->speed_down,
             (unsigned long long)mt->speed_up,
-            mt->num_peers,
+            count_live_peers(mt),
             mt->active_peers,
             pieces_done,
             pieces_total,
@@ -1792,6 +1825,148 @@ char *torrent_mgr_files_json(int index, size_t *out_len)
                         (long long)mt->torrent->files[i].length,
                         sel ? "true" : "false");
         }
+    }
+
+    json_writef(&writer, "]}");
+
+    if (out_len)
+        *out_len = writer.pos;
+
+    return buf;
+}
+
+/** Nombre del cliente a partir del peer_id estilo Azureus ("-qB4650-"). */
+static void peer_client_name(const unsigned char id[20], char *out, size_t cap)
+{
+    static const struct { char a, b; const char *name; } map[] = {
+        { 'q', 'B', "qBittorrent" }, { 'T', 'R', "Transmission" },
+        { 'l', 't', "libtorrent" },  { 'U', 'T', "uTorrent" },
+        { 'D', 'E', "Deluge" },      { 'A', 'Z', "Azureus" },
+        { 'B', 'T', "BitTorrent" },  { 'K', 'T', "KTorrent" },
+        { 'A', 'T', "Artemis" },     { 'F', 'D', "Free Download Manager" },
+        { 'R', 'Q', "rTorrent" },    { 'W', 'W', "WebTorrent" },
+        { 'P', 'I', "PicoTorrent" }, { 'H', 'L', "Halite" },
+        { 'T', 'S', "TorrentStorm" },{ 'N', 'M', "NiceTorrent" },
+    };
+
+    if (cap == 0)
+        return;
+
+    if (id[0] == '-' && id[7] == '-') {
+        for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
+            if ((char)id[1] == map[i].a && (char)id[2] == map[i].b) {
+                snprintf(out, cap, "%s", map[i].name);
+                return;
+            }
+        }
+        /* Desconocido: el identificador crudo, que ya dice algo */
+        snprintf(out, cap, "%.8s", (const char *)id);
+        return;
+    }
+
+    snprintf(out, cap, "%s", id[0] ? "?" : "-");
+}
+
+/**
+ * Peers del torrent en JSON, para la ficha desplegable del panel.
+ *
+ * Se ordenan por bytes recibidos, que es justo lo que se quiere ver: de quien
+ * estas descargando de verdad.
+ */
+char *torrent_mgr_peers_json(int index, size_t *out_len)
+{
+    managed_torrent_t *mt;
+    json_writer_t writer;
+    char *buf;
+    size_t cap;
+    int order[MAX_PEERS_PER_TORRENT];
+    int count = 0;
+    uint64_t now = get_time_sec();
+
+    if (index < 0 || index >= num_torrents)
+        return NULL;
+
+    mt = &torrents[index];
+    if (!mt->torrent)
+        return NULL;
+
+    cap = 1024 + (size_t)MAX_PEERS_PER_TORRENT * 360;
+    buf = malloc(cap);
+    if (!buf)
+        return NULL;
+
+    writer.buf = buf;
+    writer.size = cap;
+    writer.pos = 0;
+
+    /* Solo peers vivos: los huecos libres de la tabla no cuentan. */
+    for (int i = 0; i < mt->num_peers; i++) {
+        if (mt->peers[i].state != PEER_STATE_IDLE)
+            order[count++] = i;
+    }
+
+    /* Insercion por bytes recibidos (como mucho MAX_PEERS_PER_TORRENT). */
+    for (int i = 1; i < count; i++) {
+        int v = order[i];
+        int j = i - 1;
+
+        while (j >= 0 && mt->peers[order[j]].downloaded < mt->peers[v].downloaded) {
+            order[j + 1] = order[j];
+            j--;
+        }
+        order[j + 1] = v;
+    }
+
+    json_writef(&writer, "{\"id\":%d,\"name\":", index);
+    json_write_string(&writer, mt->name);
+    json_writef(&writer,
+                ",\"seeders\":%d,\"leechers\":%d,\"totalPieces\":%zu,\"peers\":[",
+                mt->seeders, mt->leechers, mt->torrent->num_pieces);
+
+    for (int k = 0; k < count; k++) {
+        torrent_peer_t *p = &mt->peers[order[k]];
+        char addr[64];
+        char client[40];
+        size_t have = 0;
+        const char *state = "connecting";
+
+        if (p->has_bitfield && p->bitfield) {
+            for (size_t pi = 0; pi < mt->torrent->num_pieces; pi++) {
+                if (p->bitfield[pi >> 3] & (1u << (7 - (pi & 7))))
+                    have++;
+            }
+        }
+
+        switch (p->state) {
+        case PEER_STATE_CONNECTING:  state = "connecting"; break;
+        case PEER_STATE_HANDSHAKING: state = "handshake"; break;
+        case PEER_STATE_READY:       state = p->choked ? "choked" : "active"; break;
+        default:                     state = "idle"; break;
+        }
+
+        snprintf(addr, sizeof(addr), "%u.%u.%u.%u:%u",
+                 (ntohl(p->addr.ip) >> 24) & 0xff,
+                 (ntohl(p->addr.ip) >> 16) & 0xff,
+                 (ntohl(p->addr.ip) >> 8) & 0xff,
+                 ntohl(p->addr.ip) & 0xff,
+                 ntohs(p->addr.port));
+        peer_client_name(p->peer_id, client, sizeof(client));
+
+        if (k > 0)
+            json_writef(&writer, ",");
+
+        json_writef(&writer, "{\"addr\":");
+        json_write_string(&writer, addr);
+        json_writef(&writer, ",\"client\":");
+        json_write_string(&writer, client);
+        json_writef(&writer,
+                    ",\"have\":%zu,\"downloaded\":%llu,\"speed\":%llu,"
+                    "\"state\":\"%s\",\"age\":%llu}",
+                    have, (unsigned long long)p->downloaded,
+                    (unsigned long long)p->speed, state,
+                    (unsigned long long)(p->connected_since > 0 &&
+                                         now > p->connected_since
+                                         ? now - p->connected_since : 0));
     }
 
     json_writef(&writer, "]}");

@@ -83,6 +83,21 @@
     .detail strong{display:block;font-size:12px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .save-path{font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#6e829c;margin-top:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .torrent-actions{display:flex;align-items:center;gap:7px}
+    .torrent{cursor:pointer}
+    .torrent .btn{cursor:pointer}
+    .peerbox{grid-column:1/-1;margin-top:4px;border-top:1px solid var(--line);padding-top:12px}
+    .peer-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:12px;color:#9fb3c9;margin-bottom:8px}
+    .ptable{width:100%;border-collapse:collapse;font-size:11px}
+    .ptable th{text-align:left;font-weight:700;color:#8ea2ba;padding:4px 7px;border-bottom:1px solid var(--line);white-space:nowrap}
+    .ptable td{padding:5px 7px;border-bottom:1px solid rgba(38,61,89,.45);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#c7d6e8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+    .ptable tr:last-child td{border-bottom:0}
+    .ptable .num{text-align:right}
+    .ptable .dim{color:#8ea2ba}
+    .ptable .st-active{color:#5ad48b}
+    .ptable .st-choked{color:#e0b25a}
+    .havebar{width:56px;height:6px;border-radius:3px;background:#1b2c42;overflow:hidden;display:inline-block;vertical-align:middle;margin-right:6px}
+    .havebar i{display:block;height:100%;background:#2a7de7}
+    .peers-empty{font-size:12px;color:#8ea2ba;padding:6px 0}
     .error-msg{grid-column:1/-1;padding:9px 11px;border-radius:9px;color:#ffc3c6;background:rgba(255,107,113,.08);font-size:11px}
     .empty{display:grid;place-items:center;text-align:center;min-height:290px;padding:35px;color:var(--muted)}
     .empty-mark{display:grid;place-items:center;width:66px;height:66px;border-radius:20px;background:#101e32;color:var(--blue);margin:0 auto 15px}
@@ -318,6 +333,21 @@
         'files.close':'Cerrar',
         'toast.filesPending':'Torrent añadido. Elige los archivos y pulsa descargar.',
         'toast.selectionStarted':'Descargando {n} archivo(s) · {size}',
+        'peers.loading':'Cargando peers...',
+        'peers.swarm':'Enjambre: {s} semillas · {l} leechers',
+        'peers.count':'{n} conectados',
+        'peers.none':'Todavía sin peers. Espera al announce o mira el registro.',
+        'peers.hPeer':'Peer',
+        'peers.hClient':'Cliente',
+        'peers.hHave':'Tiene',
+        'peers.hDown':'Bajado',
+        'peers.hSpeed':'Velocidad',
+        'peers.hState':'Estado',
+        'peers.st.active':'activo',
+        'peers.st.choked':'bloqueado',
+        'peers.st.connecting':'conectando',
+        'peers.st.handshake':'handshake',
+        'peers.st.idle':'—',
         'add.adding':'Añadiendo...',
         'add.ready':'{size} · listo para enviar',
         'path.usb':'USB',
@@ -434,6 +464,21 @@
         'files.close':'Close',
         'toast.filesPending':'Torrent added. Choose the files and press download.',
         'toast.selectionStarted':'Downloading {n} file(s) · {size}',
+        'peers.loading':'Loading peers...',
+        'peers.swarm':'Swarm: {s} seeders · {l} leechers',
+        'peers.count':'{n} connected',
+        'peers.none':'No peers yet. Wait for the announce or check the log.',
+        'peers.hPeer':'Peer',
+        'peers.hClient':'Client',
+        'peers.hHave':'Has',
+        'peers.hDown':'Down',
+        'peers.hSpeed':'Speed',
+        'peers.hState':'State',
+        'peers.st.active':'active',
+        'peers.st.choked':'choked',
+        'peers.st.connecting':'connecting',
+        'peers.st.handshake':'handshake',
+        'peers.st.idle':'—',
         'add.adding':'Adding...',
         'add.ready':'{size} · ready to upload',
         'path.usb':'USB',
@@ -550,6 +595,21 @@
         'files.close':'Fechar',
         'toast.filesPending':'Torrent adicionado. Escolhe os arquivos e prime descarregar.',
         'toast.selectionStarted':'A descarregar {n} arquivo(s) · {size}',
+        'peers.loading':'A carregar peers...',
+        'peers.swarm':'Enxame: {s} seeds · {l} leechers',
+        'peers.count':'{n} ligados',
+        'peers.none':'Ainda sem peers. Espera pelo announce ou vê o registo.',
+        'peers.hPeer':'Peer',
+        'peers.hClient':'Cliente',
+        'peers.hHave':'Tem',
+        'peers.hDown':'Baixado',
+        'peers.hSpeed':'Velocidade',
+        'peers.hState':'Estado',
+        'peers.st.active':'ativo',
+        'peers.st.choked':'bloqueado',
+        'peers.st.connecting':'a ligar',
+        'peers.st.handshake':'handshake',
+        'peers.st.idle':'—',
         'add.adding':'Adicionando...',
         'add.ready':'{size} · pronto para enviar',
         'path.usb':'USB',
@@ -568,7 +628,7 @@
       }
     };
 
-    var state={torrents:[],filter:'all',selectedPath:'',selectedFile:null,busy:false,filesId:null,files:null};
+    var state={torrents:[],filter:'all',selectedPath:'',selectedFile:null,busy:false,filesId:null,files:null,openId:null,peers:{}};
     var el=function(id){return document.getElementById(id)};
     function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
     function fmtBytes(bytes){var n=Number(bytes)||0,u=['B','KB','MB','GB','TB'],i=0;while(n>=1024&&i<u.length-1){n/=1024;i++}return n.toFixed(i&&n<100?1:0)+' '+u[i]}
@@ -675,13 +735,15 @@
       var canStart=t.state==='stopped'||t.state==='error';
       var stateLabel=T('state.'+t.state)!=='state.'+t.state?T('state.'+t.state):t.state;
       var errorText=localizedError(t);
-      return '<article class="torrent '+(t.state==='done'?'done':'')+'">'+
-        '<div><div class="torrent-top"><div class="torrent-symbol">'+iconDownload()+'</div><div style="min-width:0"><div class="torrent-name">'+esc(t.name||T('torrent.unnamed'))+'</div><div class="torrent-hash">'+esc(t.hash||'')+'</div></div><span class="state state-'+esc(t.state)+'">'+esc(stateLabel)+'</span></div>'+
+      var open=state.openId===t.id;
+      return '<article class="torrent '+(t.state==='done'?'done':'')+'" data-expand="'+t.id+'">'+
+        '<div><div class="torrent-top"><div class="torrent-symbol">'+iconDownload()+'</div><div style="min-width:0"><div class="torrent-name">'+(open?'▾':'▸')+' '+esc(t.name||T('torrent.unnamed'))+'</div><div class="torrent-hash">'+esc(t.hash||'')+'</div></div><span class="state state-'+esc(t.state)+'">'+esc(stateLabel)+'</span></div>'+
         '<div class="progress-line"><div class="track"><div class="fill" style="width:'+pct+'%"></div></div><div class="pct">'+pct+'%</div></div>'+
         '<div class="details"><div class="detail"><span>'+T('detail.speed')+'</span><strong>'+fmtSpeed(t.speed_down)+'</strong></div><div class="detail"><span>'+T('detail.remaining')+'</span><strong>'+fmtBytes(remaining)+'</strong></div><div class="detail"><span>'+T('detail.time')+'</span><strong>'+eta+'</strong></div><div class="detail"><span>'+T('detail.downloaded')+'</span><strong>'+fmtBytes(t.downloaded)+'</strong></div><div class="detail"><span>'+T('detail.peers')+'</span><strong>'+Number(t.active_peers||0)+' / '+Number(t.peers||0)+'</strong></div></div>'+
         '<div class="save-path">'+T('torrent.destination')+': '+esc(t.save_path||'—')+'</div></div>'+
         '<div class="torrent-actions">'+(canStop?'<button class="btn small" data-action="stop" data-id="'+t.id+'">'+T('action.pause')+'</button>':'')+(canStart?'<button class="btn small primary" data-action="start" data-id="'+t.id+'">'+T('action.restart')+'</button>':'')+'<button class="btn small danger" data-action="remove" data-id="'+t.id+'">'+T('action.remove')+'</button></div>'+
-        (errorText?'<div class="error-msg">'+esc(errorText)+'</div>':'')+'</article>'
+        (errorText?'<div class="error-msg">'+esc(errorText)+'</div>':'')+
+        (open?'<div class="peerbox" id="peerbox-'+t.id+'"></div>':'')+'</article>'
     }
     function render(){
       var torrents=state.torrents||[],active=0,speed=0,downloaded=0,peers=0;
@@ -690,8 +752,36 @@
       var shown=torrents.filter(visibleTorrent),list=el('torrentList');
       if(!shown.length){list.innerHTML='<div class="empty"><div><div class="empty-mark">'+iconDownload()+'</div><strong>'+(torrents.length?T('empty.filtered'):T('empty.none'))+'</strong><span>'+(torrents.length?T('empty.filteredHint'):T('empty.noneHint'))+'</span></div></div>';return}
       list.innerHTML=shown.map(torrentCard).join('');
+      if(state.openId!==null)paintPeers(state.openId);
     }
     function codeError(code,fallback){var key='error.'+code,text=T(key);return text===key?(fallback||T('error.request')):text}
+
+    /* ---- ficha de peers del torrent (se despliega al pulsar la tarjeta) ---- */
+    function paintPeers(id){
+      var box=el('peerbox-'+id);if(!box)return;
+      var d=state.peers[id];
+      if(!d){box.innerHTML='<div class="peers-empty">'+T('peers.loading')+'</div>';return}
+      var total=Number(d.totalPieces)||0,rows=d.peers||[];
+      var head='<div class="peer-head"><span>'+T('peers.swarm',{s:Number(d.seeders||0),l:Number(d.leechers||0)})+'</span><span>'+T('peers.count',{n:rows.length})+'</span></div>';
+      if(!rows.length){box.innerHTML=head+'<div class="peers-empty">'+T('peers.none')+'</div>';return}
+      box.innerHTML=head+'<table class="ptable"><thead><tr><th>'+T('peers.hPeer')+'</th><th>'+T('peers.hClient')+'</th><th>'+T('peers.hHave')+'</th><th class="num">'+T('peers.hDown')+'</th><th class="num">'+T('peers.hSpeed')+'</th><th>'+T('peers.hState')+'</th></tr></thead><tbody>'+
+        rows.map(function(p){
+          var pct=total?Math.round(Number(p.have||0)*100/total):0;
+          var st=T('peers.st.'+p.state);if(st==='peers.st.'+p.state)st=p.state;
+          return '<tr><td title="'+esc(p.addr)+'">'+esc(p.addr)+'</td><td class="dim">'+esc(p.client||'—')+'</td>'+
+            '<td><span class="havebar"><i style="width:'+Math.max(2,Math.min(100,pct))+'%"></i></span><span class="dim">'+pct+'%</span></td>'+
+            '<td class="num">'+fmtBytes(p.downloaded)+'</td>'+
+            '<td class="num">'+(Number(p.speed)>0?fmtSpeed(p.speed):'—')+'</td>'+
+            '<td class="st-'+esc(p.state)+'">'+esc(st)+'</td></tr>'
+        }).join('')+'</tbody></table>';
+    }
+    function loadPeers(id){
+      return fetchJson('/api/torrents/'+id+'/peers').then(function(d){state.peers[id]=d;paintPeers(id)}).catch(function(){delete state.peers[id];paintPeers(id)});
+    }
+    function toggleExpand(id){
+      if(state.openId===id){state.openId=null;delete state.peers[id];render();return}
+      state.openId=id;state.peers[id]=null;render();loadPeers(id);
+    }
     function fetchJson(url,options){return fetch(url,options).then(function(response){return response.text().then(function(text){
       /* Los endpoints en C pueden colar el NUL del buffer al final; JSON.parse
        * no lo tolera y el fallo aparecia como "unexpected character". */
@@ -701,7 +791,7 @@
       return data
     })})}
     function refresh(){
-      return Promise.all([fetchJson('/api/torrents'),fetchJson('/api/status')]).then(function(results){state.torrents=results[0].torrents||[];var info=results[1];setConnection('online',T('connection.online'));el('versionChip').textContent='PSTorrent5 v'+(info.version||'1.1.0');el('accessChip').textContent=info.jailbroken?T('access.etahen'):T('access.elf');el('capacityChip').textContent=T('hero.capacityN',{n:info.capacity||8});var logChip=el('logChip');if(info.log_path){logChip.textContent=T('hero.logPath',{path:info.log_path});logChip.classList.remove('hidden')}else{logChip.classList.add('hidden')}el('lastUpdate').textContent=T('downloads.updated',{time:new Date().toLocaleTimeString(localeFor(lang),{hour:'2-digit',minute:'2-digit',second:'2-digit'})});render()}).catch(function(){setConnection('offline',T('connection.offline'));el('lastUpdate').textContent=T('downloads.unreachable');render()})
+      return Promise.all([fetchJson('/api/torrents'),fetchJson('/api/status')]).then(function(results){state.torrents=results[0].torrents||[];var info=results[1];setConnection('online',T('connection.online'));el('versionChip').textContent='PSTorrent5 v'+(info.version||'1.1.0');el('accessChip').textContent=info.jailbroken?T('access.etahen'):T('access.elf');el('capacityChip').textContent=T('hero.capacityN',{n:info.capacity||8});var logChip=el('logChip');if(info.log_path){logChip.textContent=T('hero.logPath',{path:info.log_path});logChip.classList.remove('hidden')}else{logChip.classList.add('hidden')}el('lastUpdate').textContent=T('downloads.updated',{time:new Date().toLocaleTimeString(localeFor(lang),{hour:'2-digit',minute:'2-digit',second:'2-digit'})});render();if(state.openId!==null)loadPeers(state.openId)}).catch(function(){setConnection('offline',T('connection.offline'));el('lastUpdate').textContent=T('downloads.unreachable');render()})
     }
     function loadPaths(){
       return fetchJson('/api/paths').then(function(data){var paths=data.paths||[],available=paths.filter(function(p){return p.exists&&p.writable}),saved='';try{saved=localStorage.getItem('pstorrent5.path')||''}catch(e){}if(!state.selectedPath&&available.some(function(p){return p.path===saved}))state.selectedPath=saved;if(!available.some(function(p){return p.path===state.selectedPath}))state.selectedPath=available.length?available[0].path:'';var box=el('storagePaths');box.innerHTML=paths.map(function(p){var usable=p.exists&&p.writable,status=!p.exists?T('path.notMounted'):(p.writable?T('path.writable'):T('path.noPermission'));return'<button type="button" class="path '+(p.path===state.selectedPath?'selected ':'')+(usable?'':'unavailable')+'" data-path="'+esc(p.path)+'" '+(usable?'':'disabled')+'><div class="path-title"><span>'+(p.removable?T('path.usb'):T('path.disk'))+'</span><span>'+esc(p.label)+'</span></div><div class="path-code">'+esc(p.path)+' · '+status+'</div></button>'}).join('')+(!available.length?'<div class="hint">'+T('path.none')+'</div>':'')}).catch(function(){el('storagePaths').innerHTML='<div class="hint">'+T('path.error')+'</div>'})
@@ -725,7 +815,7 @@
     el('fileInput').onchange=function(event){var file=event.target.files[0];state.selectedFile=file||null;if(file){el('fileLabel').textContent=file.name;el('fileHelp').textContent=T('add.ready',{size:fmtBytes(file.size)});el('dropZone').classList.add('has-file')}};
     el('customPath').oninput=function(){if(this.value.trim())document.querySelectorAll('.path').forEach(function(node){node.classList.remove('selected')})};
     el('storagePaths').onclick=function(event){var node=event.target.closest('.path');if(node)selectPath(node.getAttribute('data-path'))};
-    el('torrentList').onclick=function(event){var btn=event.target.closest('[data-action]');if(btn)torrentAction(Number(btn.getAttribute('data-id')),btn.getAttribute('data-action'))};
+    el('torrentList').onclick=function(event){var btn=event.target.closest('[data-action]');if(btn){torrentAction(Number(btn.getAttribute('data-id')),btn.getAttribute('data-action'));return}if(event.target.closest('.peerbox'))return;var card=event.target.closest('[data-expand]');if(card)toggleExpand(Number(card.getAttribute('data-expand')))};
     document.querySelectorAll('.filter').forEach(function(btn){btn.onclick=function(){setFilter(btn.getAttribute('data-filter'))}});
     el('addModal').onclick=function(event){if(event.target===el('addModal'))closeModal()};
     el('filesModal').onclick=function(event){if(event.target===el('filesModal'))closeFiles()};
